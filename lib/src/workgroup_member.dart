@@ -19,7 +19,7 @@ typedef MemberCallback<T> = T Function(WorkerCommand command);
 /// Subclass this to define state and logic that should run in a worker isolate.
 /// The subclass is serialized and sent to the isolate on [IsolateWorkgroup.addInstance];
 /// only sendable fields (see [SendPort.send]) are transferred.
-abstract class WorkgroupMember extends InternalPooledInstance {
+abstract class WorkgroupMember extends InternalWorkgroupMember {
   WorkgroupMember() : memberId = instanceIdCounter++;
 
   /// Unique ID for this member instance.

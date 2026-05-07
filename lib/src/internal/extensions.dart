@@ -71,8 +71,6 @@ extension IsolateWorkgroupExtensions on IsolateWorkgroup {
 
     final request = Request(instanceId, action);
 
-    // print('[Sending PooledInstanceRequest to isolate $targetIsolate]');
-
     mainToWorkerSendPorts[targetIsolate]!.send(request);
 
     final completer = Completer<R>();
@@ -85,7 +83,7 @@ extension IsolateWorkgroupExtensions on IsolateWorkgroup {
   }
 }
 
-abstract class InternalPooledInstance {
+abstract class InternalWorkgroupMember {
   late SendPort _sendPort;
 
   /// The [SendPort] of the isolate where this instance is executed.
