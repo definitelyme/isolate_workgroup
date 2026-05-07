@@ -1,14 +1,14 @@
-/// Pooled instance functionality tests
+/// Workgroup member functionality tests
 @TestOn('vm')
 library;
 
 import 'dart:async';
 
-import 'package:isolate_pool_2/isolate_pool_2.dart';
+import 'package:isolate_workgroup/isolate_workgroup.dart';
 import 'package:test/test.dart';
 
 // Test instance A with simple operations
-class InstanceA extends PooledInstance {
+class InstanceA extends WorkgroupMember {
   int sum(int x, int y) {
     return x + y;
   }
@@ -32,12 +32,12 @@ class InstanceA extends PooledInstance {
   }
 
   @override
-  Future init() async {
+  Future<void> setup() async {
     // Simple initialization
   }
 
   @override
-  Future receiveRemoteCall(Action action) async {
+  Future handle(WorkerCommand action) async {
     switch (action) {
       case SumIntAction _:
         var ac = action;
@@ -48,8 +48,8 @@ class InstanceA extends PooledInstance {
       case CallbackIssuingAction _:
         var ac = action;
         return deffered(ac.x, (y) async {
-          var x = await callRemoteMethod<int>(CallbackAction(y));
-          await callRemoteMethod(CallbackAction(x + 1));
+          var x = await notifyHost<int>(CallbackAction(y));
+          await notifyHost(CallbackAction(x + 1));
         });
       case FailAction _:
         return fail();
@@ -60,18 +60,18 @@ class InstanceA extends PooledInstance {
 }
 
 // Test instance B with different operations
-class InstanceB extends PooledInstance {
+class InstanceB extends WorkgroupMember {
   double sum(double x, double y) {
     return x + y;
   }
 
   @override
-  Future init() async {
+  Future<void> setup() async {
     // Simple initialization
   }
 
   @override
-  Future receiveRemoteCall(Action action) async {
+  Future handle(WorkerCommand action) async {
     switch (action) {
       case SumIntAction _:
         var ac = action;
@@ -88,19 +88,19 @@ class InstanceB extends PooledInstance {
 }
 
 // Test worker that can fail on start
-class WorkerWithInit extends PooledInstance {
+class WorkerWithInit extends WorkgroupMember {
   final bool failOnStart;
 
   WorkerWithInit({this.failOnStart = false});
 
   @override
-  Future init() async {
+  Future<void> setup() async {
     if (failOnStart) throw 'Failed on start';
     await Future.delayed(Duration(milliseconds: 10));
   }
 
   @override
-  Future receiveRemoteCall(Action action) async {
+  Future handle(WorkerCommand action) async {
     if (action is GetNameAction) {
       return 'Worker';
     }
@@ -109,19 +109,19 @@ class WorkerWithInit extends PooledInstance {
 }
 
 // Value holder for state testing
-class ValueHolder extends PooledInstance {
+class ValueHolder extends WorkgroupMember {
   String initialValue;
   ValueHolder(this.initialValue);
 
   late List<String> _values;
 
   @override
-  Future init() async {
+  Future<void> setup() async {
     _values = [initialValue];
   }
 
   @override
-  Future<dynamic> receiveRemoteCall(Action action) async {
+  Future<dynamic> handle(WorkerCommand action) async {
     switch (action) {
       case GetValues _:
         return _values;
@@ -136,90 +136,90 @@ class ValueHolder extends PooledInstance {
 }
 
 // Actions for testing
-class SumIntAction extends Action {
+class SumIntAction extends WorkerCommand {
   final int x;
   final int y;
   SumIntAction(this.x, this.y);
 }
 
-class SumDynamicAction extends Action {
+class SumDynamicAction extends WorkerCommand {
   final dynamic x;
   final dynamic y;
   SumDynamicAction(this.x, this.y);
 }
 
-class ConcatAction extends Action {
+class ConcatAction extends WorkerCommand {
   final String x;
   final String y;
   ConcatAction(this.x, this.y);
 }
 
-class CallbackIssuingAction extends Action {
+class CallbackIssuingAction extends WorkerCommand {
   final int x;
   CallbackIssuingAction(this.x);
 }
 
-class CallbackAction extends Action {
+class CallbackAction extends WorkerCommand {
   final int x;
   CallbackAction(this.x);
 }
 
-class FailAction extends Action {}
+class FailAction extends WorkerCommand {}
 
-class GetNameAction extends Action {}
+class GetNameAction extends WorkerCommand {}
 
-class GetValues extends Action {}
+class GetValues extends WorkerCommand {}
 
-class SetValue extends Action {
+class SetValue extends WorkerCommand {
   final String value;
   SetValue(this.value);
 }
 
-class UnknownAction extends Action {}
+class UnknownAction extends WorkerCommand {}
 
 void main() {
   group('Instance Creation and Lifecycle', () {
-    late IsolatePool pool;
+    late IsolateWorkgroup pool;
 
     setUp(() async {
-      pool = IsolatePool(4);
+      pool = IsolateWorkgroup(4);
 
       // Suppress error logs for cleaner test output
       pool.setErrorHandler(IsolateErrorType.all, (error) {});
 
-      await pool.start();
+      await pool.launch();
     });
 
     tearDown(() {
-      pool.stop();
+      pool.shutdown();
     });
 
     test('Creating single pooled instance', () async {
       await pool.addInstance(InstanceA());
-      expect(pool.numberOfPooledInstances, 1);
+      expect(pool.memberCount, 1);
     });
 
     test('Creating multiple pooled instances', () async {
       for (var i = 0; i < 20; i++) {
         await pool.addInstance(InstanceA());
       }
-      expect(pool.numberOfPooledInstances, 20);
+      expect(pool.memberCount, 20);
     });
 
     test('Creating different type pooled instances', () async {
       for (var i = 0; i < 20; i++) {
         await pool.addInstance(i % 2 == 0 ? InstanceA() : InstanceB());
       }
-      expect(pool.numberOfPooledInstances, 20);
+      expect(pool.memberCount, 20);
     });
 
     test('Instances are created in different isolates', () async {
-      var instances = <PooledInstanceProxy>[];
+      var instances = <MemberProxy>[];
       for (var i = 0; i < 20; i++) {
         var pi = await pool.addInstance(i % 2 == 0 ? InstanceA() : InstanceB());
         instances.add(pi);
       }
-      expect(pool.numberOfPooledInstances, 20);
+      expect(pool.memberCount, 20);
 
       var pools = List<int>.filled(4, 0);
       for (var pi in instances) {
@@ -253,55 +253,55 @@ void main() {
     test('Instance with invalid isolate index', () async {
       await expectLater(
         pool.addInstance(InstanceA(), isolateIndex: 10),
-        throwsA(isA<IsolatePoolException>()),
+        throwsA(isA<WorkgroupException>()),
       );
     });
   });
 
   group('Instance Destruction', () {
-    late IsolatePool pool;
+    late IsolateWorkgroup pool;
 
     setUp(() async {
-      pool = IsolatePool(4);
+      pool = IsolateWorkgroup(4);
 
       // Suppress error logs for cleaner test output
       pool.setErrorHandler(IsolateErrorType.all, (error) {});
 
-      await pool.start();
+      await pool.launch();
     });
 
     tearDown(() {
-      pool.stop();
+      pool.shutdown();
     });
 
     test('Destroy pooled instance', () async {
-      var instances = <PooledInstanceProxy>[];
+      var instances = <MemberProxy>[];
       for (var i = 0; i < 5; i++) {
         var pi = await pool.addInstance(InstanceA());
         instances.add(pi);
       }
-      expect(pool.numberOfPooledInstances, 5);
+      expect(pool.memberCount, 5);
 
       pool.destroyInstance(instances[0]);
-      expect(pool.numberOfPooledInstances, 4);
+      expect(pool.memberCount, 4);
     });
 
     test('Destroy already destroyed instance', () async {
       var instance = await pool.addInstance(InstanceA());
 
       pool.destroyInstance(instance);
-      expect(pool.numberOfPooledInstances, 0);
+      expect(pool.memberCount, 0);
 
       // Destroying an already destroyed instance should not throw
       pool.destroyInstance(instance);
-      expect(pool.numberOfPooledInstances, 0);
+      expect(pool.memberCount, 0);
     });
 
     test('Destroy instance from specific isolate', () async {
       final instance = await pool.addInstance(InstanceA(), isolateIndex: 1);
 
       pool.destroyInstance(instance, isolate: 1);
-      expect(pool.numberOfPooledInstances, 0);
+      expect(pool.memberCount, 0);
     });
 
     test('Destroy instance with wrong isolate index throws', () async {
@@ -309,57 +309,57 @@ void main() {
 
       expect(
         () => pool.destroyInstance(instance, isolate: 2),
-        throwsA(isA<IsolatePoolException>()),
+        throwsA(isA<WorkgroupException>()),
       );
     });
 
     test('Pooled instance can be destroyed', () async {
       var pi = ValueHolder('Hello');
       var px = await pool.addInstance(pi);
-      var r = await px.callRemoteMethod<List<String>>(GetValues());
+      var r = await px.invoke<List<String>>(GetValues());
 
       expect(r[0], 'Hello');
 
       pool.destroyInstance(px);
 
-      expect(() => px.callRemoteMethod(GetValues()), throwsA(isA<NoSuchIsolateInstanceException>()));
+      expect(() => px.invoke(GetValues()), throwsA(isA<WorkgroupMemberNotFoundException>()));
     });
   });
 
   group('Remote Method Calls', () {
-    late IsolatePool pool;
-    late PooledInstanceProxy instanceA;
-    late PooledInstanceProxy instanceB;
+    late IsolateWorkgroup pool;
+    late MemberProxy instanceA;
+    late MemberProxy instanceB;
 
     setUp(() async {
-      pool = IsolatePool(4);
+      pool = IsolateWorkgroup(4);
 
       // Suppress error logs for cleaner test output
       pool.setErrorHandler(IsolateErrorType.all, (error) {});
 
-      await pool.start();
+      await pool.launch();
       instanceA = await pool.addInstance(InstanceA());
       instanceB = await pool.addInstance(InstanceB());
     });
 
     tearDown(() {
-      pool.stop();
+      pool.shutdown();
     });
 
     test('Simple action returns result', () async {
-      var res = await instanceA.callRemoteMethod(SumIntAction(2, 2));
+      var res = await instanceA.invoke(SumIntAction(2, 2));
       expect(res, 4);
     });
 
     test('Async action returns result', () async {
-      var res = await instanceA.callRemoteMethod(ConcatAction('Hello ', 'world'));
+      var res = await instanceA.invoke(ConcatAction('Hello ', 'world'));
       expect(res, 'Hello world');
     });
 
     test('Failed action returns error', () async {
       var errorMessage = '';
       try {
-        await instanceA.callRemoteMethod(FailAction());
+        await instanceA.invoke(FailAction());
       } catch (e) {
         errorMessage = e.toString();
       }
@@ -370,7 +370,7 @@ void main() {
     test('Unknown action throws error', () async {
       var errorMessage = '';
       try {
-        await instanceB.callRemoteMethod(ConcatAction('', ''));
+        await instanceB.invoke(ConcatAction('', ''));
       } catch (e) {
         errorMessage = e.toString();
       }
@@ -379,17 +379,17 @@ void main() {
     });
 
     test('Dynamic type handling', () async {
-      var intResult = await instanceB.callRemoteMethod<int>(SumDynamicAction(1, 2));
+      var intResult = await instanceB.invoke<int>(SumDynamicAction(1, 2));
       expect(intResult, 3);
 
-      var doubleResult = await instanceB.callRemoteMethod<double>(SumDynamicAction(10.5, 10.5));
+      var doubleResult = await instanceB.invoke<double>(SumDynamicAction(10.5, 10.5));
       expect(doubleResult, 21.0);
     });
 
     test('Invalid dynamic types throw error', () async {
       var errorMessage = '';
       try {
-        await instanceB.callRemoteMethod<int>(SumDynamicAction('', ''));
+        await instanceB.invoke<int>(SumDynamicAction('', ''));
       } catch (e) {
         errorMessage = e.toString();
       }
@@ -400,7 +400,7 @@ void main() {
     test('Multiple concurrent requests to same instance', () async {
       var futures = <Future>[];
       for (int i = 0; i < 50; i++) {
-        futures.add(instanceA.callRemoteMethod(SumIntAction(i, i)));
+        futures.add(instanceA.invoke(SumIntAction(i, i)));
       }
 
       var results = await Future.wait(futures);
@@ -410,8 +410,8 @@ void main() {
     });
 
     test('Sending second request before first completes', () async {
-      var f1 = instanceA.callRemoteMethod(CallbackIssuingAction(1));
-      var f2 = instanceA.callRemoteMethod(SumIntAction(1, 1));
+      var f1 = instanceA.invoke(CallbackIssuingAction(1));
+      var f2 = instanceA.invoke(SumIntAction(1, 1));
 
       await f1;
       var x2 = await f2;
@@ -420,30 +420,30 @@ void main() {
   });
 
   group('State Management', () {
-    late IsolatePool pool;
+    late IsolateWorkgroup pool;
 
     setUp(() async {
-      pool = IsolatePool(2);
+      pool = IsolateWorkgroup(2);
 
       // Suppress error logs for cleaner test output
       pool.setErrorHandler(IsolateErrorType.all, (error) {});
 
-      await pool.start();
+      await pool.launch();
     });
 
     tearDown(() {
-      pool.stop();
+      pool.shutdown();
     });
 
     test('Pooled instance maintains state', () async {
       var pi = ValueHolder('Hello');
       var px = await pool.addInstance(pi);
-      var r = await px.callRemoteMethod<List<String>>(GetValues());
+      var r = await px.invoke<List<String>>(GetValues());
 
       expect(r[0], 'Hello');
 
-      await px.callRemoteMethod(SetValue('world'));
-      r = await px.callRemoteMethod<List<String>>(GetValues());
+      await px.invoke(SetValue('world'));
+      r = await px.invoke<List<String>>(GetValues());
 
       expect(r[0], 'Hello');
       expect(r[1], 'world');
@@ -453,11 +453,11 @@ void main() {
       var instance1 = await pool.addInstance(ValueHolder('First'));
       var instance2 = await pool.addInstance(ValueHolder('Second'));
 
-      await instance1.callRemoteMethod(SetValue('Value1'));
-      await instance2.callRemoteMethod(SetValue('Value2'));
+      await instance1.invoke(SetValue('Value1'));
+      await instance2.invoke(SetValue('Value2'));
 
-      var result1 = await instance1.callRemoteMethod<List<String>>(GetValues());
-      var result2 = await instance2.callRemoteMethod<List<String>>(GetValues());
+      var result1 = await instance1.invoke<List<String>>(GetValues());
+      var result2 = await instance2.invoke<List<String>>(GetValues());
 
       expect(result1, ['First', 'Value1']);
       expect(result2, ['Second', 'Value2']);
@@ -466,14 +466,14 @@ void main() {
     test('Pooled instance throws on unknown action', () async {
       var pi = ValueHolder('Hello');
       var px = await pool.addInstance(pi);
-      var r = await px.callRemoteMethod<List<String>>(GetValues());
+      var r = await px.invoke<List<String>>(GetValues());
 
       expect(r[0], 'Hello');
 
       expect(
-        px.callRemoteMethod(UnknownAction()),
+        px.invoke(UnknownAction()),
         throwsA(
-          isA<IsolateError>().having(
+          isA<WorkgroupIsolateError>().having(
             (e) => e.toString(),
             'error message',
             contains('Unknown action UnknownAction'),
@@ -484,19 +484,19 @@ void main() {
   });
 
   group('Instance Callbacks', () {
-    late IsolatePool pool;
+    late IsolateWorkgroup pool;
 
     setUp(() async {
-      pool = IsolatePool(4);
+      pool = IsolateWorkgroup(4);
 
       // Suppress error logs for cleaner test output
       pool.setErrorHandler(IsolateErrorType.all, (error) {});
 
-      await pool.start();
+      await pool.launch();
     });
 
     tearDown(() {
-      pool.stop();
+      pool.shutdown();
     });
 
     test('Instance with callback receives calls', () async {
@@ -514,7 +514,7 @@ void main() {
         return null;
       });
 
-      await instance.callRemoteMethod(CallbackIssuingAction(1));
+      await instance.invoke(CallbackIssuingAction(1));
 
       var res = await completer.future;
       expect(res, 2);
@@ -528,36 +528,36 @@ void main() {
       var instance = await pool.addInstance(InstanceA());
 
       // Should not throw when callback is called but not set
-      await instance.callRemoteMethod(CallbackIssuingAction(1));
+      await instance.invoke(CallbackIssuingAction(1));
 
       // Wait a bit to ensure no errors
       await Future.delayed(Duration(milliseconds: 50));
 
       // Should still be able to make normal calls
-      var result = await instance.callRemoteMethod(SumIntAction(5, 5));
+      var result = await instance.invoke(SumIntAction(5, 5));
       expect(result, 10);
     });
   });
 
   group('Instance Health and Pool State', () {
     test('Calling method with pool stopped throws', () async {
-      var pool = IsolatePool(4);
-      await pool.start();
+      var pool = IsolateWorkgroup(4);
+      await pool.launch();
 
       var instance = await pool.addInstance(InstanceA());
-      expect(pool.numberOfPooledInstances, 1);
+      expect(pool.memberCount, 1);
 
-      pool.stop();
+      pool.shutdown();
 
       expect(
-        () => instance.callRemoteMethod(SumIntAction(1, 1)),
-        throwsA(isA<IsolatePoolStoppedException>()),
+        () => instance.invoke(SumIntAction(1, 1)),
+        throwsA(isA<WorkgroupInactiveException>()),
       );
     });
 
     test('Stopping pool with pending instance creation', () async {
-      var pool = IsolatePool(5);
-      await pool.start();
+      var pool = IsolateWorkgroup(5);
+      await pool.launch();
 
       late Future f;
       var errorMessage = '';
@@ -568,7 +568,7 @@ void main() {
           if (i < 24) await f;
         }
 
-        pool.stop();
+        pool.shutdown();
         await f;
       } catch (e) {
         errorMessage = e.toString();
@@ -578,11 +578,11 @@ void main() {
     });
 
     test('Stopping pool with pending requests', () async {
-      var pool = IsolatePool(5);
-      await pool.start();
+      var pool = IsolateWorkgroup(5);
+      await pool.launch();
 
       late Future f;
-      late PooledInstanceProxy pi;
+      late MemberProxy pi;
       var errorMessage = '';
 
       try {
@@ -590,14 +590,14 @@ void main() {
           pi = await pool.addInstance(InstanceA());
         }
 
-        expect(pool.numberOfPooledInstances, 25);
+        expect(pool.memberCount, 25);
 
         for (var i = 0; i < 25; i++) {
-          f = pi.callRemoteMethod<int>(SumIntAction(i, 1));
+          f = pi.invoke<int>(SumIntAction(i, 1));
           if (i < 24) await f;
         }
 
-        pool.stop();
+        pool.shutdown();
         await f;
       } catch (e) {
         errorMessage = e.toString();
@@ -607,25 +607,25 @@ void main() {
     });
 
     test('Instance cleanup on pool stop', () async {
-      final pool = IsolatePool(3);
-      await pool.start();
+      final pool = IsolateWorkgroup(3);
+      await pool.launch();
 
       // Create multiple instances
-      final instances = <PooledInstanceProxy>[];
+      final instances = <MemberProxy>[];
       for (int i = 0; i < 6; i++) {
         instances.add(await pool.addInstance(InstanceA()));
       }
 
-      expect(pool.numberOfPooledInstances, 6);
+      expect(pool.memberCount, 6);
 
       // Stop pool
-      pool.stop();
+      pool.shutdown();
 
       // All operations should fail after stop
       for (final instance in instances) {
         expect(
-          () => instance.callRemoteMethod(SumIntAction(1, 1)),
-          throwsA(isA<IsolatePoolStoppedException>()),
+          () => instance.invoke(SumIntAction(1, 1)),
+          throwsA(isA<WorkgroupInactiveException>()),
         );
       }
     });
@@ -633,8 +633,8 @@ void main() {
 
   group('Instance Load Distribution', () {
     test('Instances distributed evenly across isolates', () async {
-      final pool = IsolatePool(4);
-      await pool.start();
+      final pool = IsolateWorkgroup(4);
+      await pool.launch();
 
       final instanceCounts = List<int>.filled(4, 0);
 
@@ -649,14 +649,14 @@ void main() {
         expect(count, 10);
       }
 
-      pool.stop();
+      pool.shutdown();
     });
 
     test('Load balancing with mixed instance types', () async {
-      final pool = IsolatePool(3);
-      await pool.start();
+      final pool = IsolateWorkgroup(3);
+      await pool.launch();
 
-      final instances = <PooledInstanceProxy>[];
+      final instances = <MemberProxy>[];
 
       // Create different types of instances
       for (int i = 0; i < 30; i++) {
@@ -669,57 +669,57 @@ void main() {
         }
       }
 
-      expect(pool.numberOfPooledInstances, 30);
+      expect(pool.memberCount, 30);
 
       // Verify all instances are functional
       for (int i = 0; i < instances.length; i++) {
         if (i % 3 == 0) {
-          final result = await instances[i].callRemoteMethod(SumIntAction(i, i));
+          final result = await instances[i].invoke(SumIntAction(i, i));
           expect(result, i * 2);
         } else if (i % 3 == 1) {
-          final result = await instances[i].callRemoteMethod(SumIntAction(i, 1));
+          final result = await instances[i].invoke(SumIntAction(i, 1));
           expect(result, i + 1);
         } else {
-          final result = await instances[i].callRemoteMethod(GetNameAction());
+          final result = await instances[i].invoke(GetNameAction());
           expect(result, 'Worker');
         }
       }
 
-      pool.stop();
+      pool.shutdown();
     });
   });
 
   group('Request Tracking', () {
-    late IsolatePool pool;
+    late IsolateWorkgroup pool;
 
     setUp(() async {
-      pool = IsolatePool(4);
+      pool = IsolateWorkgroup(4);
 
       // Suppress error logs for cleaner test output
       pool.setErrorHandler(IsolateErrorType.all, (error) {});
 
-      await pool.start();
+      await pool.launch();
     });
 
     tearDown(() {
-      pool.stop();
+      pool.shutdown();
     });
 
     test('Request count grows and declines', () async {
       final instance = await pool.addInstance(InstanceA());
 
-      var r1 = instance.callRemoteMethod(ConcatAction('Hello ', 'world'));
-      expect(pool.numberOfPendingRequests, 1);
+      var r1 = instance.invoke(ConcatAction('Hello ', 'world'));
+      expect(pool.pendingCount, 1);
 
-      var r2 = instance.callRemoteMethod(ConcatAction('Hello ', 'world'));
-      expect(pool.numberOfPendingRequests, 2);
+      var r2 = instance.invoke(ConcatAction('Hello ', 'world'));
+      expect(pool.pendingCount, 2);
 
       await Future.wait([r1, r2]);
-      expect(pool.numberOfPendingRequests, 0);
+      expect(pool.pendingCount, 0);
     });
 
     test('Request tracking across multiple instances', () async {
-      final instances = <PooledInstanceProxy>[];
+      final instances = <MemberProxy>[];
       for (int i = 0; i < 4; i++) {
         instances.add(await pool.addInstance(InstanceA()));
       }
@@ -727,16 +727,16 @@ void main() {
       // Start multiple requests
       final futures = <Future>[];
       for (var instance in instances) {
-        futures.add(instance.callRemoteMethod(ConcatAction('test', 'ing')));
+        futures.add(instance.invoke(ConcatAction('test', 'ing')));
       }
 
       // Should have pending requests
-      expect(pool.numberOfPendingRequests, greaterThan(0));
+      expect(pool.pendingCount, greaterThan(0));
 
       await Future.wait(futures);
 
       // All requests should be complete
-      expect(pool.numberOfPendingRequests, 0);
+      expect(pool.pendingCount, 0);
     });
   });
 }

@@ -4,38 +4,38 @@ library;
 
 import 'dart:async';
 
-import 'package:isolate_pool_2/isolate_pool_2.dart';
+import 'package:isolate_workgroup/isolate_workgroup.dart';
 import 'package:test/test.dart';
 
 // Simple test job
-class SimpleJob extends PooledJob<int> {
+class SimpleJob extends WorkgroupJob<int> {
   final int value;
   SimpleJob(this.value);
 
   @override
-  Future<int> job() async => value * 2;
+  Future<int> execute() async => value * 2;
 }
 
 // Long running job
-class LongRunningJob extends PooledJob<String> {
+class LongRunningJob extends WorkgroupJob<String> {
   final int durationMs;
   final String result;
   LongRunningJob(this.durationMs, this.result);
 
   @override
-  Future<String> job() async {
+  Future<String> execute() async {
     await Future.delayed(Duration(milliseconds: durationMs));
     return result;
   }
 }
 
 // Memory intensive job
-class MemoryIntensiveJob extends PooledJob<int> {
+class MemoryIntensiveJob extends WorkgroupJob<int> {
   final int sizeInMB;
   MemoryIntensiveJob(this.sizeInMB);
 
   @override
-  Future<int> job() async {
+  Future<int> execute() async {
     final data = List.filled(sizeInMB * 1024 * 1024 ~/ 8, 0.0);
     var sum = 0.0;
     for (var i = 0; i < data.length; i += 1000) {
@@ -46,12 +46,12 @@ class MemoryIntensiveJob extends PooledJob<int> {
 }
 
 // Fibonacci job for performance testing
-class FibonacciJob extends PooledJob<int> {
+class FibonacciJob extends WorkgroupJob<int> {
   final int n;
   FibonacciJob(this.n);
 
   @override
-  Future<int> job() async {
+  Future<int> execute() async {
     if (n <= 1) return n;
     int a = 0, b = 1;
     for (int i = 2; i <= n; i++) {
@@ -64,24 +64,24 @@ class FibonacciJob extends PooledJob<int> {
 }
 
 // Callback job for testing callback functionality
-class TestCallbackJob extends PooledJob<int> {
+class TestCallbackJob extends WorkgroupJob<int> {
   final int startValue;
   TestCallbackJob(this.startValue);
 
   @override
-  Future<int> job() async {
+  Future<int> execute() async {
     // Simple job that returns incremented value
     return startValue + 10;
   }
 }
 
 // Throwing job for error testing
-class ThrowingJob extends PooledJob<int> {
+class ThrowingJob extends WorkgroupJob<int> {
   final String errorMessage;
   ThrowingJob(this.errorMessage);
 
   @override
-  Future<int> job() async {
+  Future<int> execute() async {
     throw Exception(errorMessage);
   }
 }
@@ -89,96 +89,96 @@ class ThrowingJob extends PooledJob<int> {
 void main() {
   group('Pool Lifecycle', () {
     test('Pool starts and stops correctly', () async {
-      final pool = IsolatePool(4);
-      expect(pool.state, IsolatePoolState.notStarted);
+      final pool = IsolateWorkgroup(4);
+      expect(pool.state, WorkgroupState.idle);
 
-      await pool.start();
-      expect(pool.state, IsolatePoolState.started);
-      expect(pool.numberOfIsolates, 4);
+      await pool.launch();
+      expect(pool.state, WorkgroupState.active);
+      expect(pool.isolatesCount, 4);
 
-      pool.stop();
-      expect(pool.state, IsolatePoolState.stopped);
+      pool.shutdown();
+      expect(pool.state, WorkgroupState.disposed);
     });
 
     test('Pool with 0 isolates starts successfully', () async {
-      final pool = IsolatePool(0);
-      await pool.start();
+      final pool = IsolateWorkgroup(0);
+      await pool.launch();
 
-      expect(pool.numberOfIsolates, 0);
-      expect(pool.state, IsolatePoolState.started);
+      expect(pool.isolatesCount, 0);
+      expect(pool.state, WorkgroupState.active);
 
-      pool.stop();
+      pool.shutdown();
     });
 
     test('Pool with custom initialization', () async {
       // Note: The init function runs in each isolate, not in the main isolate,
       // so we can't directly test if it was called. We just verify that
-      // start() completes successfully with an init function.
-      final pool = IsolatePool(2);
-
-      await pool.start(init: () {
+      // launch() completes successfully with an init function.
+      final pool = IsolateWorkgroup(2, config: WorkgroupConfig(onSetup: () {
         // This runs in each isolate
-      });
+      }));
 
-      expect(pool.state, IsolatePoolState.started);
-      expect(pool.numberOfIsolates, 2);
+      await pool.launch();
 
-      pool.stop();
+      expect(pool.state, WorkgroupState.active);
+      expect(pool.isolatesCount, 2);
+
+      pool.shutdown();
     });
 
     test('Pool start with errorsAreFatal parameter', () async {
-      final pool = IsolatePool(2);
-      await pool.start(errorsAreFatal: true);
+      final pool = IsolateWorkgroup(2, config: WorkgroupConfig(fatalErrors: true));
+      await pool.launch();
 
-      expect(pool.state, IsolatePoolState.started);
+      expect(pool.state, WorkgroupState.active);
 
-      pool.stop();
+      pool.shutdown();
     });
 
     test('Rapid start/stop cycles', () async {
       for (int cycle = 0; cycle < 5; cycle++) {
-        final pool = IsolatePool(3);
-        await pool.start();
+        final pool = IsolateWorkgroup(3);
+        await pool.launch();
 
-        final result = await pool.scheduleJob(SimpleJob(cycle));
+        final result = await pool.dispatch(SimpleJob(cycle));
         expect(result, cycle * 2);
 
-        pool.stop();
+        pool.shutdown();
         await Future.delayed(Duration(milliseconds: 10));
       }
     });
 
     test('Pool cannot start twice', () async {
-      final pool = IsolatePool(2);
-      await pool.start();
+      final pool = IsolateWorkgroup(2);
+      await pool.launch();
 
       await expectLater(
-        pool.start(),
-        throwsA(isA<IsolatePoolException>()),
+        pool.launch(),
+        throwsA(isA<WorkgroupException>()),
       );
 
-      pool.stop();
+      pool.shutdown();
     });
 
     test('Pool stop during pending operations', () async {
-      final pool = IsolatePool(2);
-      await pool.start();
+      final pool = IsolateWorkgroup(2);
+      await pool.launch();
 
       // Schedule long-running jobs
       final futures = <Future>[];
       for (int i = 0; i < 10; i++) {
-        futures.add(pool.scheduleJob(LongRunningJob(1000, 'job$i')));
+        futures.add(pool.dispatch(LongRunningJob(1000, 'job$i')));
       }
 
       // Stop pool while jobs are running
       await Future.delayed(Duration(milliseconds: 100));
-      pool.stop();
+      pool.shutdown();
 
       // All futures should complete with error
       for (final future in futures) {
         await expectLater(
           future,
-          throwsA(isA<IsolatePoolJobCancelledException>()),
+          throwsA(isA<WorkgroupJobAbortedException>()),
         );
       }
     });
@@ -186,113 +186,113 @@ void main() {
 
   group('Dynamic Pool Scaling', () {
     test('Add isolates to running pool', () async {
-      final pool = IsolatePool(2);
-      await pool.start();
+      final pool = IsolateWorkgroup(2);
+      await pool.launch();
 
-      expect(pool.numberOfIsolates, 2);
-
-      await pool.addIsolate();
-      expect(pool.numberOfIsolates, 3);
+      expect(pool.isolatesCount, 2);
 
       await pool.addIsolate();
-      expect(pool.numberOfIsolates, 4);
+      expect(pool.isolatesCount, 3);
 
-      pool.stop();
+      await pool.addIsolate();
+      expect(pool.isolatesCount, 4);
+
+      pool.shutdown();
     });
 
     test('Dynamic scaling under load', () async {
-      final pool = IsolatePool(2);
-      await pool.start();
+      final pool = IsolateWorkgroup(2);
+      await pool.launch();
 
       // Start with light load
-      var job1 = pool.scheduleJob(LongRunningJob(100, 'result1'));
-      var job2 = pool.scheduleJob(LongRunningJob(100, 'result2'));
+      var job1 = pool.dispatch(LongRunningJob(100, 'result1'));
+      var job2 = pool.dispatch(LongRunningJob(100, 'result2'));
       await Future.wait([job1, job2]);
 
       // Scale up under heavy load
       await pool.addIsolate();
       await pool.addIsolate();
-      expect(pool.numberOfIsolates, 4);
+      expect(pool.isolatesCount, 4);
 
       // Distribute heavy load
       final heavyJobs = <Future<String>>[];
       for (int i = 0; i < 20; i++) {
-        heavyJobs.add(pool.scheduleJob(LongRunningJob(50, 'heavy$i')));
+        heavyJobs.add(pool.dispatch(LongRunningJob(50, 'heavy$i')));
       }
 
       final results = await Future.wait(heavyJobs);
       expect(results.length, 20);
 
-      pool.stop();
+      pool.shutdown();
     });
 
     test('Maximum pool size stress test', () async {
-      final pool = IsolatePool(50);
-      await pool.start();
+      final pool = IsolateWorkgroup(50);
+      await pool.launch();
 
-      expect(pool.numberOfIsolates, 50);
+      expect(pool.isolatesCount, 50);
 
       // Schedule jobs across all isolates
       final jobs = <Future<int>>[];
       for (int i = 0; i < 100; i++) {
-        jobs.add(pool.scheduleJob(FibonacciJob(20)));
+        jobs.add(pool.dispatch(FibonacciJob(20)));
       }
 
       final results = await Future.wait(jobs);
       expect(results.every((r) => r == 6765), true); // Fibonacci(20) = 6765
 
-      pool.stop();
+      pool.shutdown();
     });
   });
 
   group('Job Scheduling', () {
-    late IsolatePool pool;
+    late IsolateWorkgroup pool;
 
     setUp(() async {
-      pool = IsolatePool(4);
+      pool = IsolateWorkgroup(4);
 
       // Suppress error logs for cleaner test output
       pool.setErrorHandler(IsolateErrorType.all, (error) {});
 
-      await pool.start();
+      await pool.launch();
     });
 
     tearDown(() {
-      pool.stop();
+      pool.shutdown();
     });
 
     test('Simple job execution', () async {
-      final result = await pool.scheduleJob(SimpleJob(21));
+      final result = await pool.dispatch(SimpleJob(21));
       expect(result, 42);
     });
 
     test('Job scheduling to specific isolate', () async {
-      final result1 = await pool.scheduleJob(SimpleJob(10), 0);
+      final result1 = await pool.dispatch(SimpleJob(10), 0);
       expect(result1, 20);
 
-      final result2 = await pool.scheduleJob(SimpleJob(20), 1);
+      final result2 = await pool.dispatch(SimpleJob(20), 1);
       expect(result2, 40);
 
-      final result3 = await pool.scheduleJob(SimpleJob(30), 2);
+      final result3 = await pool.dispatch(SimpleJob(30), 2);
       expect(result3, 60);
     });
 
     test('Job scheduling with invalid isolate index throws', () async {
       expect(
-        () => pool.scheduleJob(SimpleJob(1), 10),
-        throwsA(isA<IsolatePoolException>()),
+        () => pool.dispatch(SimpleJob(1), 10),
+        throwsA(isA<WorkgroupException>()),
       );
 
       expect(
-        () => pool.scheduleJob(SimpleJob(1), -2),
-        throwsA(isA<IsolatePoolException>()),
+        () => pool.dispatch(SimpleJob(1), -2),
+        throwsA(isA<WorkgroupException>()),
       );
     });
 
     test('Multiple concurrent jobs', () async {
       final futures = <Future<int>>[];
       for (int i = 0; i < 100; i++) {
-        futures.add(pool.scheduleJob(SimpleJob(i)));
+        futures.add(pool.dispatch(SimpleJob(i)));
       }
 
       final results = await Future.wait(futures);
@@ -302,30 +302,30 @@ void main() {
     });
 
     test('Job scheduling after pool stop fails', () async {
-      pool.stop();
+      pool.shutdown();
 
       expect(
-        () => pool.scheduleJob(SimpleJob(1)),
-        throwsA(isA<IsolatePoolStoppedException>()),
+        () => pool.dispatch(SimpleJob(1)),
+        throwsA(isA<WorkgroupInactiveException>()),
       );
     });
 
     test('Long-running job cancellation on pool stop', () async {
-      final longJob = pool.scheduleJob(LongRunningJob(5000, 'never'));
+      final longJob = pool.dispatch(LongRunningJob(5000, 'never'));
 
       await Future.delayed(Duration(milliseconds: 100));
-      pool.stop();
+      pool.shutdown();
 
       await expectLater(
         longJob,
-        throwsA(isA<IsolatePoolJobCancelledException>()),
+        throwsA(isA<WorkgroupJobAbortedException>()),
       );
     });
 
     test('Memory intensive jobs', () async {
       final jobs = <Future<int>>[];
       for (int i = 0; i < 5; i++) {
-        jobs.add(pool.scheduleJob(MemoryIntensiveJob(10))); // 10MB each
+        jobs.add(pool.dispatch(MemoryIntensiveJob(10))); // 10MB each
       }
 
       final results = await Future.wait(jobs);
@@ -336,53 +336,53 @@ void main() {
     test('Simple callback job', () async {
       final job = TestCallbackJob(10);
 
-      final result = await pool.scheduleJob(job);
+      final result = await pool.dispatch(job);
 
       expect(result, 20);
     });
 
     test('Job exception handling', () async {
       await expectLater(
-        pool.scheduleJob(ThrowingJob('Test error')),
+        pool.dispatch(ThrowingJob('Test error')),
         throwsA(isA<Exception>()),
       );
 
       // Pool should still be functional after job exception
-      final result = await pool.scheduleJob(SimpleJob(5));
+      final result = await pool.dispatch(SimpleJob(5));
       expect(result, 10);
     });
   });
 
   group('Health Monitoring', () {
     test('Health checking with default config', () async {
-      final pool = IsolatePool(
+      final pool = IsolateWorkgroup(
         2,
-        healthConfig: const IsolateHealthConfig(
+        config: WorkgroupConfig(health: const WorkgroupHealthConfig(
           enabled: true,
           pingTimeout: Duration(milliseconds: 500),
-        ),
+        )),
       );
 
-      await pool.start();
+      await pool.launch();
 
-      final isHealthy0 = await pool.pingIsolate(0);
+      final isHealthy0 = await pool.probe(0);
       expect(isHealthy0, true);
 
-      final isHealthy1 = await pool.pingIsolate(1);
+      final isHealthy1 = await pool.probe(1);
       expect(isHealthy1, true);
 
-      pool.stop();
+      pool.shutdown();
     });
 
     test('Health status retrieval', () async {
-      final pool = IsolatePool(
+      final pool = IsolateWorkgroup(
         3,
-        healthConfig: const IsolateHealthConfig(
+        config: WorkgroupConfig(health: const WorkgroupHealthConfig(
           enabled: true,
-        ),
+        )),
       );
 
-      await pool.start();
+      await pool.launch();
 
       final status = pool.healthStatus;
       expect(status.length, 3);
@@ -392,96 +392,94 @@ void main() {
         expect(status[i]?.isHealthy, true);
       }
 
-      pool.stop();
+      pool.shutdown();
     });
 
     test('Health checking disabled', () async {
-      final pool = IsolatePool(
+      final pool = IsolateWorkgroup(
         2,
-        healthConfig: const IsolateHealthConfig.disabled(),
+        config: WorkgroupConfig(health: const WorkgroupHealthConfig.disabled()),
       );
 
-      await pool.start();
+      await pool.launch();
 
       // With health checking disabled, should return true without actual ping
-      expect(await pool.pingIsolate(0), true);
+      expect(await pool.probe(0), true);
       expect(pool.isIsolateHealthy(0), true);
 
-      pool.stop();
+      pool.shutdown();
     });
 
     test('Health check during heavy load', () async {
-      final pool = IsolatePool(
+      final pool = IsolateWorkgroup(
         2,
-        healthConfig: const IsolateHealthConfig(
+        config: WorkgroupConfig(health: const WorkgroupHealthConfig(
           enabled: true,
           pingTimeout: Duration(milliseconds: 200),
-        ),
+        )),
       );
 
-      await pool.start();
+      await pool.launch();
 
       // Start heavy computation
       final heavyJobs = <Future>[];
       for (int i = 0; i < 10; i++) {
-        heavyJobs.add(pool.scheduleJob(FibonacciJob(30)));
+        heavyJobs.add(pool.dispatch(FibonacciJob(30)));
       }
 
       // Check health while under load
-      final isHealthy = await pool.pingIsolate(0);
+      final isHealthy = await pool.probe(0);
       expect(isHealthy, true);
 
       await Future.wait(heavyJobs);
-      pool.stop();
+      pool.shutdown();
     });
 
     test('Aggressive health config', () async {
-      final pool = IsolatePool(
+      final pool = IsolateWorkgroup(
         2,
-        healthConfig: const IsolateHealthConfig.aggressive(),
+        config: WorkgroupConfig(health: const WorkgroupHealthConfig.aggressive()),
       );
 
-      await pool.start();
+      await pool.launch();
 
       // Aggressive config has short timeouts
-      final isHealthy = await pool.pingIsolate(0);
+      final isHealthy = await pool.probe(0);
       expect(isHealthy, true);
 
-      pool.stop();
+      pool.shutdown();
     });
 
     test('Relaxed health config', () async {
-      final pool = IsolatePool(
+      final pool = IsolateWorkgroup(
         2,
-        healthConfig: const IsolateHealthConfig.relaxed(),
+        config: WorkgroupConfig(health: const WorkgroupHealthConfig.relaxed()),
       );
 
-      await pool.start();
+      await pool.launch();
 
       // Relaxed config has longer timeouts
-      final isHealthy = await pool.pingIsolate(0);
+      final isHealthy = await pool.probe(0);
       expect(isHealthy, true);
 
-      pool.stop();
+      pool.shutdown();
     });
   });
 
   group('Error Handling', () {
     test('Error handler receives all error types', () async {
       final errors = <Object>[];
-      final pool = IsolatePool(2);
+      final pool = IsolateWorkgroup(2);
 
       pool.setErrorHandler(IsolateErrorType.all, (error) {
         errors.add(error);
       });
 
-      await pool.start(init: () {
-        // This won't actually throw in main isolate, but shows handler setup
-      });
+      await pool.launch();
 
       expect(errors.isEmpty, true);
 
-      pool.stop();
+      pool.shutdown();
     });
 
     test('Specific error type handlers', () async {
@@ -489,7 +487,7 @@ void main() {
       Object? instanceError;
       Object? initError;
 
-      final pool = IsolatePool(2);
+      final pool = IsolateWorkgroup(2);
 
       pool.setErrorHandler(IsolateErrorType.job, (error) {
         jobError = error;
@@ -503,17 +501,17 @@ void main() {
         initError = error;
       });
 
-      await pool.start();
+      await pool.launch();
 
       expect(jobError, isNull);
       expect(instanceError, isNull);
       expect(initError, isNull);
 
-      pool.stop();
+      pool.shutdown();
     });
 
     test('Multiple error handlers can be set', () async {
-      final pool = IsolatePool(2);
+      final pool = IsolateWorkgroup(2);
 
       pool.setErrorHandler(IsolateErrorType.all, (error) {});
       // Set a new handler to override the previous one
@@ -521,31 +519,34 @@ void main() {
         print('New handler: $error');
       });
 
-      await pool.start();
-      pool.stop();
+      await pool.launch();
+      pool.shutdown();
     });
 
     test('errorsAreFatal parameter effect', () async {
-      final pool = IsolatePool(
+      final pool = IsolateWorkgroup(
         2,
-        healthConfig: const IsolateHealthConfig(
-          enabled: true,
-          pingTimeout: Duration(milliseconds: 500),
+        config: WorkgroupConfig(
+          fatalErrors: true,
+          health: const WorkgroupHealthConfig(
+            enabled: true,
+            pingTimeout: Duration(milliseconds: 500),
+          ),
         ),
       );
 
       // Suppress error logs during tests
       pool.setErrorHandler(IsolateErrorType.all, (error) {});
 
-      // Start with errorsAreFatal: true
-      await pool.start(errorsAreFatal: true);
+      // Start with fatalErrors: true
+      await pool.launch();
 
       // Verify isolate is healthy before exception
-      expect(await pool.pingIsolate(0), true);
+      expect(await pool.probe(0), true);
 
       // Schedule a job that will fail
       try {
-        await pool.scheduleJob(ThrowingJob('Test exception'), 0);
+        await pool.dispatch(ThrowingJob('Test exception'), 0);
       } catch (e) {
         // Expected
       }
@@ -554,52 +555,52 @@ void main() {
       await Future.delayed(Duration(milliseconds: 200));
 
       // IMPORTANT: Isolate is STILL ALIVE because job exceptions are caught
-      // errorsAreFatal only affects UNHANDLED errors, not caught job exceptions
-      expect(await pool.pingIsolate(0), true);
+      // fatalErrors only affects UNHANDLED errors, not caught job exceptions
+      expect(await pool.probe(0), true);
 
       // Verify isolate can still process jobs
-      final result = await pool.scheduleJob(SimpleJob(42), 0);
+      final result = await pool.dispatch(SimpleJob(42), 0);
       expect(result, 84);
 
-      pool.stop();
+      pool.shutdown();
     });
   });
 
   group('Pool State and Statistics', () {
     test('Pool state transitions', () async {
-      final pool = IsolatePool(2);
+      final pool = IsolateWorkgroup(2);
 
-      expect(pool.state, IsolatePoolState.notStarted);
+      expect(pool.state, WorkgroupState.idle);
 
-      await pool.start();
-      expect(pool.state, IsolatePoolState.started);
+      await pool.launch();
+      expect(pool.state, WorkgroupState.active);
 
-      pool.stop();
-      expect(pool.state, IsolatePoolState.stopped);
+      pool.shutdown();
+      expect(pool.state, WorkgroupState.disposed);
     });
 
     test('Isolate index tracking', () async {
-      final pool = IsolatePool(2);
-      await pool.start();
+      final pool = IsolateWorkgroup(2);
+      await pool.launch();
 
       // The pool doesn't have instances initially
-      expect(pool.numberOfPooledInstances, 0);
+      expect(pool.memberCount, 0);
 
-      pool.stop();
+      pool.shutdown();
     });
   });
 
   group('Performance Benchmarks', () {
     test('Job throughput measurement', () async {
-      final pool = IsolatePool(4);
-      await pool.start();
+      final pool = IsolateWorkgroup(4);
+      await pool.launch();
 
       final stopwatch = Stopwatch()..start();
       final jobs = <Future<int>>[];
 
       // Schedule 1000 simple jobs
       for (int i = 0; i < 1000; i++) {
-        jobs.add(pool.scheduleJob(SimpleJob(i)));
+        jobs.add(pool.dispatch(SimpleJob(i)));
       }
 
       await Future.wait(jobs);
@@ -610,7 +611,7 @@ void main() {
 
       expect(jobsPerSecond, greaterThan(100)); // Should handle >100 jobs/second
 
-      pool.stop();
+      pool.shutdown();
     });
 
     test('Parallel speedup verification', () async {
@@ -639,14 +640,14 @@ void main() {
       sequentialStopwatch.stop();
 
       // Parallel execution
-      final pool = IsolatePool(4);
-      await pool.start();
+      final pool = IsolateWorkgroup(4);
+      await pool.launch();
 
       final parallelStopwatch = Stopwatch()..start();
       final parallelJobs = <Future<int>>[];
 
       for (int i = 0; i < 50; i++) {
-        parallelJobs.add(pool.scheduleJob(FibonacciJob(25)));
+        parallelJobs.add(pool.dispatch(FibonacciJob(25)));
       }
 
       await Future.wait(parallelJobs);
@@ -661,19 +662,19 @@ void main() {
       // Should complete successfully regardless of speedup
       expect(parallelJobs.length, 50);
 
-      pool.stop();
+      pool.shutdown();
     });
 
     test('Instance communication latency', () async {
-      final pool = IsolatePool(2);
-      await pool.start();
+      final pool = IsolateWorkgroup(2);
+      await pool.launch();
 
       // For this test, we'll measure job scheduling latency
       final measurements = <int>[];
 
       for (int i = 0; i < 100; i++) {
         final start = DateTime.now().microsecondsSinceEpoch;
-        await pool.scheduleJob(SimpleJob(i));
+        await pool.dispatch(SimpleJob(i));
         final end = DateTime.now().microsecondsSinceEpoch;
         measurements.add(end - start);
       }
@@ -683,7 +684,7 @@ void main() {
 
       expect(avgLatency, lessThan(10000)); // Should be less than 10ms
 
-      pool.stop();
+      pool.shutdown();
     });
   });
 }

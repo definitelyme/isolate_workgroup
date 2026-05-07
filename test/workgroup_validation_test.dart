@@ -5,26 +5,26 @@ library;
 import 'dart:async';
 import 'dart:isolate';
 
-import 'package:isolate_pool_2/isolate_pool_2.dart';
+import 'package:isolate_workgroup/isolate_workgroup.dart';
 import 'package:test/test.dart';
 
 // Valid test instances
-class SimpleData extends PooledInstance {
+class SimpleData extends WorkgroupMember {
   final String name;
   final int value;
 
   SimpleData(this.name, this.value);
 
   @override
-  Future<void> init() async {}
+  Future<void> setup() async {}
 
   @override
-  Future<dynamic> receiveRemoteCall(Action action) async {
+  Future<dynamic> handle(WorkerCommand action) async {
     return null;
   }
 }
 
-class DataWithCollections extends PooledInstance {
+class DataWithCollections extends WorkgroupMember {
   final List<int> numbers;
   final Map<String, double> scores;
   final Set<String> tags;
@@ -32,35 +32,35 @@ class DataWithCollections extends PooledInstance {
   DataWithCollections(this.numbers, this.scores, this.tags);
 
   @override
-  Future<void> init() async {}
+  Future<void> setup() async {}
 
   @override
-  Future<dynamic> receiveRemoteCall(Action action) async {
+  Future<dynamic> handle(WorkerCommand action) async {
     return null;
   }
 }
 
 // Invalid test instances
-class InvalidInstanceWithCompleter extends PooledInstance {
+class InvalidInstanceWithCompleter extends WorkgroupMember {
   final Completer<int> completer = Completer<int>();
 
   @override
-  Future<void> init() async {}
+  Future<void> setup() async {}
 
   @override
-  Future<dynamic> receiveRemoteCall(Action action) async {
+  Future<dynamic> handle(WorkerCommand action) async {
     return null;
   }
 }
 
-class InvalidInstanceWithStream extends PooledInstance {
+class InvalidInstanceWithStream extends WorkgroupMember {
   final StreamController<String> controller = StreamController<String>();
 
   @override
-  Future<void> init() async {}
+  Future<void> setup() async {}
 
   @override
-  Future<dynamic> receiveRemoteCall(Action action) async {
+  Future<dynamic> handle(WorkerCommand action) async {
     return null;
   }
 }
@@ -68,14 +68,14 @@ class InvalidInstanceWithStream extends PooledInstance {
 // Simulates the user's real-world scenario
 class NumbersTrivalRepository {
   final StreamController<int> _controller;
-  final IsolatePool pool;
+  final IsolateWorkgroup pool;
 
   NumbersTrivalRepository(this.pool) : _controller = StreamController<int>();
 
   // DANGEROUS: This method uses a closure that captures 'this'
   // The entire object (including _controller) gets sent to the isolate
   Future<int> methodThatReturnsNumberDangerous(int param1, int param2) {
-    return pool.scheduleJob(
+    return pool.dispatch(
       TwoParamsJob(
         param1,
         param2,
@@ -91,7 +91,7 @@ class NumbersTrivalRepository {
 
   // SAFE: This method uses a static function
   Future<int> methodThatReturnsNumberSafe(int param1, int param2) {
-    return pool.scheduleJob(
+    return pool.dispatch(
       TwoParamsJob(param1, param2, _jobHandler),
     );
   }
@@ -107,7 +107,7 @@ class NumbersTrivalRepository {
 }
 
 // Generic two-parameter job similar to user's example
-class TwoParamsJob<P1, P2, R> extends PooledJob<R> {
+class TwoParamsJob<P1, P2, R> extends WorkgroupJob<R> {
   TwoParamsJob(this.param1, this.param2, this.jobFunction);
 
   final P1 param1;
@@ -115,20 +115,20 @@ class TwoParamsJob<P1, P2, R> extends PooledJob<R> {
   final R Function(P1, P2) jobFunction;
 
   @override
-  Future<R> job() async => jobFunction(param1, param2);
+  Future<R> execute() async => jobFunction(param1, param2);
 }
 
 // Another real-world example: Repository with Completer
 class DataRepository {
   final Completer<String> _dataCompleter;
-  final IsolatePool pool;
+  final IsolateWorkgroup pool;
 
   DataRepository(this.pool) : _dataCompleter = Completer<String>();
 
   Future<String> fetchDataWithClosure(String endpoint) {
     // DANGEROUS: Closure captures _dataCompleter (even if not used in this simple example)
     // In real code, the closure might check _dataCompleter.isCompleted or similar
-    return pool.scheduleJob(
+    return pool.dispatch(
       SingleParamJob(endpoint, (url) {
         // The closure captures 'this' and all its fields, including _dataCompleter
         final completed = _dataCompleter.isCompleted; // This line causes the capture
@@ -139,7 +139,7 @@ class DataRepository {
 
   Future<String> fetchDataSafe(String endpoint) {
     // SAFE: Static function
-    return pool.scheduleJob(
+    return pool.dispatch(
       SingleParamJob(endpoint, _fetchHandler),
     );
   }
@@ -149,35 +149,35 @@ class DataRepository {
   }
 }
 
-class SingleParamJob<P, R> extends PooledJob<R> {
+class SingleParamJob<P, R> extends WorkgroupJob<R> {
   SingleParamJob(this.param, this.jobFunction);
 
   final P param;
   final R Function(P) jobFunction;
 
   @override
-  Future<R> job() async => jobFunction(param);
+  Future<R> execute() async => jobFunction(param);
 }
 
 // Valid job that doesn't capture anything
-class SafeCalculationJob extends PooledJob<int> {
+class SafeCalculationJob extends WorkgroupJob<int> {
   final int x;
   final int y;
 
   SafeCalculationJob(this.x, this.y);
 
   @override
-  Future<int> job() async => x + y;
+  Future<int> execute() async => x + y;
 }
 
 // Safe job with only primitives for testing isolate remains functional
-class SafeJob extends PooledJob<int> {
+class SafeJob extends WorkgroupJob<int> {
   final int value;
 
   SafeJob(this.value);
 
   @override
-  Future<int> job() async => value * 2;
+  Future<int> execute() async => value * 2;
 }
 
 void main() {
@@ -287,8 +287,8 @@ void main() {
         controller.close();
       });
 
-      test('IsolatePool is not sendable', () {
-        final pool = IsolatePool(2);
+      test('IsolateWorkgroup is not sendable', () {
+        final pool = IsolateWorkgroup(2);
         expect(canBeSentToIsolate(pool), false);
       });
 
@@ -314,7 +314,7 @@ void main() {
       });
     });
 
-    group('PooledInstance Validation', () {
+    group('WorkgroupMember Validation', () {
       test('Simple valid instance passes validation', () {
         final instance = SimpleData('test', 42);
         final errors = instance.validateForIsolate();
@@ -349,7 +349,7 @@ void main() {
         final instance = InvalidInstanceWithCompleter();
         final errors = instance.validateForIsolate();
         expect(errors.first, contains('Completer'));
-        expect(errors.first, contains('NEVER sendable'));
+        expect(errors.first, contains('Never sendable'));
       });
     });
 
@@ -440,16 +440,16 @@ void main() {
       });
     });
 
-    group('Integration with IsolatePool', () {
-      late IsolatePool pool;
+    group('Integration with IsolateWorkgroup', () {
+      late IsolateWorkgroup pool;
 
       setUp(() async {
-        pool = IsolatePool(2);
-        await pool.start();
+        pool = IsolateWorkgroup(2);
+        await pool.launch();
       });
 
       tearDown(() {
-        pool.stop();
+        pool.shutdown();
       });
 
       test('Pool accepts valid instances', () async {
@@ -458,17 +458,17 @@ void main() {
         // Should successfully add the instance
         final proxy = await pool.addInstance(instance);
         expect(proxy, isNotNull);
-        expect(pool.numberOfPooledInstances, 1);
+        expect(pool.memberCount, 1);
       });
 
       test('Pool rejects instance with Completer', () async {
         final instance = InvalidInstanceWithCompleter();
 
-        // Should throw IsolatePoolException with validation error
+        // Should throw WorkgroupException with validation error
         await expectLater(
           pool.addInstance(instance),
           throwsA(
-            isA<IsolatePoolException>().having(
+            isA<WorkgroupException>().having(
               (e) => e.toString(),
               'error message',
               allOf(
@@ -480,20 +480,20 @@ void main() {
         );
 
         // Instance should not be added
-        expect(pool.numberOfPooledInstances, 0);
+        expect(pool.memberCount, 0);
       });
 
       test('Pool rejects instance with StreamController', () async {
         final instance = InvalidInstanceWithStream();
 
-        // Should throw IsolatePoolException
+        // Should throw WorkgroupException
         await expectLater(
           pool.addInstance(instance),
-          throwsA(isA<IsolatePoolException>()),
+          throwsA(isA<WorkgroupException>()),
         );
 
         // Instance should not be added
-        expect(pool.numberOfPooledInstances, 0);
+        expect(pool.memberCount, 0);
       });
 
       test('Validation error includes helpful documentation', () async {
@@ -527,10 +527,10 @@ void main() {
         // First attempt should fail
         await expectLater(
           pool.addInstance(invalidInstance),
-          throwsA(isA<IsolatePoolException>()),
+          throwsA(isA<WorkgroupException>()),
         );
 
-        expect(pool.numberOfPooledInstances, 0);
+        expect(pool.memberCount, 0);
 
         // But we can still add valid instances
         final valid1 = SimpleData('first', 1);
@@ -539,7 +539,7 @@ void main() {
         await pool.addInstance(valid1);
         await pool.addInstance(valid2);
 
-        expect(pool.numberOfPooledInstances, 2);
+        expect(pool.memberCount, 2);
       });
 
       test('Validation prevents runtime errors in isolates', () async {
@@ -573,15 +573,15 @@ void main() {
 
   group('Job Closure Validation Tests', () {
     group('Job Closure Validation - Real World Scenarios', () {
-      late IsolatePool pool;
+      late IsolateWorkgroup pool;
 
       setUp(() async {
-        pool = IsolatePool(2);
-        await pool.start();
+        pool = IsolateWorkgroup(2);
+        await pool.launch();
       });
 
       tearDown(() {
-        pool.stop();
+        pool.shutdown();
       });
 
       test('Repository with StreamController - closure method should fail validation', () async {
@@ -591,7 +591,7 @@ void main() {
         await expectLater(
           repo.methodThatReturnsNumberDangerous(5, 10),
           throwsA(
-            isA<IsolatePoolException>().having(
+            isA<WorkgroupException>().having(
               (e) => e.toString(),
               'error message',
               contains('non-sendable'),
@@ -600,7 +600,7 @@ void main() {
         );
 
         // Verify isolate is still alive after error
-        final isHealthy = await pool.pingIsolate(0);
+        final isHealthy = await pool.probe(0);
         expect(isHealthy, true, reason: 'Isolate should remain alive after error');
 
         // Verify we can still schedule jobs
@@ -627,7 +627,7 @@ void main() {
         await expectLater(
           repo.fetchDataWithClosure('https://api.example.com'),
           throwsA(
-            isA<IsolatePoolException>().having(
+            isA<WorkgroupException>().having(
               (e) => e.toString(),
               'error message',
               contains('non-sendable'),
@@ -636,7 +636,7 @@ void main() {
         );
 
         // Verify isolate is still alive after error
-        final isHealthy = await pool.pingIsolate(0);
+        final isHealthy = await pool.probe(0);
         expect(isHealthy, true, reason: 'Isolate should remain alive after error');
 
         // Verify we can still schedule jobs
@@ -655,7 +655,7 @@ void main() {
       test('Job with only primitives should pass validation', () async {
         final job = SafeCalculationJob(10, 20);
 
-        final result = await pool.scheduleJob(job);
+        final result = await pool.dispatch(job);
         expect(result, 30);
       });
 
@@ -682,7 +682,7 @@ void main() {
         }
 
         // Verify isolate is still alive after error
-        final isHealthy = await pool.pingIsolate(0);
+        final isHealthy = await pool.probe(0);
         expect(isHealthy, true, reason: 'Isolate should remain alive after error');
 
         repo.dispose();
@@ -690,15 +690,15 @@ void main() {
     });
 
     group('Job Closure Validation - Edge Cases', () {
-      late IsolatePool pool;
+      late IsolateWorkgroup pool;
 
       setUp(() async {
-        pool = IsolatePool(2);
-        await pool.start();
+        pool = IsolateWorkgroup(2);
+        await pool.launch();
       });
 
       tearDown(() {
-        pool.stop();
+        pool.shutdown();
       });
 
       test('Nested closures capturing non-sendable objects are caught', () async {
@@ -715,12 +715,12 @@ void main() {
         );
 
         await expectLater(
-          pool.scheduleJob(job),
-          throwsA(isA<IsolatePoolException>()),
+          pool.dispatch(job),
+          throwsA(isA<WorkgroupException>()),
         );
 
         // Verify isolate is still alive after error
-        final isHealthy = await pool.pingIsolate(0);
+        final isHealthy = await pool.probe(0);
         expect(isHealthy, true, reason: 'Isolate should remain alive after error');
 
         controller.close();
@@ -729,7 +729,7 @@ void main() {
       test('Top-level function reference works', () async {
         final job = TwoParamsJob<int, int, int>(5, 3, _topLevelAdd);
 
-        final result = await pool.scheduleJob(job);
+        final result = await pool.dispatch(job);
         expect(result, 8);
       });
 
@@ -745,9 +745,9 @@ void main() {
         // This might pass or fail depending on Dart's closure implementation
         // The validation is conservative and may reject some safe closures
         try {
-          final result = await pool.scheduleJob(job);
+          final result = await pool.dispatch(job);
           expect(result, 50);
-        } on IsolatePoolException {
+        } on WorkgroupException {
           // This is acceptable - conservative validation
           // Better to reject some safe cases than allow unsafe ones
         }
@@ -755,15 +755,15 @@ void main() {
     });
 
     group('Documentation Examples', () {
-      late IsolatePool pool;
+      late IsolateWorkgroup pool;
 
       setUp(() async {
-        pool = IsolatePool(2);
-        await pool.start();
+        pool = IsolateWorkgroup(2);
+        await pool.launch();
       });
 
       tearDown(() {
-        pool.stop();
+        pool.shutdown();
       });
 
       test('Example: Wrong way - closure captures context', () async {
@@ -772,11 +772,11 @@ void main() {
         // ❌ WRONG: This will fail at send time
         await expectLater(
           repository.badExample(),
-          throwsA(isA<IsolatePoolException>()),
+          throwsA(isA<WorkgroupException>()),
         );
 
         // Verify isolate is still alive after error
-        final isHealthy = await pool.pingIsolate(0);
+        final isHealthy = await pool.probe(0);
         expect(isHealthy, true, reason: 'Isolate should remain alive after error');
 
         repository.dispose();
@@ -794,15 +794,15 @@ void main() {
     });
 
     group('Isolate Remains Functional After Errors', () {
-      late IsolatePool pool;
+      late IsolateWorkgroup pool;
 
       setUp(() async {
-        pool = IsolatePool(2);
-        await pool.start();
+        pool = IsolateWorkgroup(2);
+        await pool.launch();
       });
 
       tearDown(() {
-        pool.stop();
+        pool.shutdown();
       });
 
       test('Isolate can process jobs after catching unsendable error', () async {
@@ -810,29 +810,29 @@ void main() {
 
         // First, try to send a job with a closure that captures non-sendable object
         await expectLater(
-          pool.scheduleJob(
+          pool.dispatch(
             TwoParamsJob<int, int, int>(5, 10, (a, b) {
               // This closure captures 'controller' from outer scope
               controller.add('test');
               return a + b;
             }),
           ),
-          throwsA(isA<IsolatePoolException>()),
+          throwsA(isA<WorkgroupException>()),
         );
 
         // Verify isolate is still alive
-        final isHealthy = await pool.pingIsolate(0);
+        final isHealthy = await pool.probe(0);
         expect(isHealthy, true, reason: 'Isolate should remain alive after error');
 
         // Now verify the isolate is still functional by sending safe jobs
-        final result = await pool.scheduleJob(SafeJob(21));
+        final result = await pool.dispatch(SafeJob(21));
         expect(result, 42);
 
         // Verify we can send multiple more jobs
-        final result2 = await pool.scheduleJob(SafeJob(10));
+        final result2 = await pool.dispatch(SafeJob(10));
         expect(result2, 20);
 
-        final result3 = await pool.scheduleJob(SafeJob(15));
+        final result3 = await pool.dispatch(SafeJob(15));
         expect(result3, 30);
 
         controller.close();
@@ -844,45 +844,45 @@ void main() {
 
         // Send first unsendable job
         await expectLater(
-          pool.scheduleJob(
+          pool.dispatch(
             TwoParamsJob<int, int, int>(1, 2, (a, b) {
               controller1.add('test');
               return a + b;
             }),
           ),
-          throwsA(isA<IsolatePoolException>().having(
+          throwsA(isA<WorkgroupException>().having(
             (e) => e.toString(),
-            'This is likely because your PooledJob uses a closure that captures non-sendable objects.',
+            'This is likely because your WorkgroupJob uses a closure that captures non-sendable objects.',
             contains('non-sendable'),
           )),
         );
 
         // Verify isolate 0 is still alive
-        var isHealthy = await pool.pingIsolate(0);
+        var isHealthy = await pool.probe(0);
         expect(isHealthy, true, reason: 'Isolate 0 should remain alive after first error');
 
         // Send second unsendable job
         await expectLater(
-          pool.scheduleJob(
+          pool.dispatch(
             TwoParamsJob<int, int, int>(3, 4, (a, b) {
               controller2.add(1);
               return a + b;
             }),
           ),
-          throwsA(isA<IsolatePoolException>()),
+          throwsA(isA<WorkgroupException>()),
         );
 
         // Verify both isolates are still alive
-        isHealthy = await pool.pingIsolate(0);
+        isHealthy = await pool.probe(0);
         expect(isHealthy, true, reason: 'Isolate 0 should remain alive after second error');
-        isHealthy = await pool.pingIsolate(1);
+        isHealthy = await pool.probe(1);
         expect(isHealthy, true, reason: 'Isolate 1 should remain alive after errors');
 
         // Pool should still work
-        final result1 = await pool.scheduleJob(SafeJob(5));
+        final result1 = await pool.dispatch(SafeJob(5));
         expect(result1, 10);
 
-        final result2 = await pool.scheduleJob(SafeJob(7));
+        final result2 = await pool.dispatch(SafeJob(7));
         expect(result2, 14);
 
         controller1.close();
@@ -893,34 +893,34 @@ void main() {
         final controller = StreamController<int>();
 
         // Initial state
-        expect(pool.numberOfIsolates, 2);
+        expect(pool.isolatesCount, 2);
 
         // Send unsendable job
         await expectLater(
-          pool.scheduleJob(
+          pool.dispatch(
             TwoParamsJob<int, int, int>(1, 2, (a, b) {
               controller.add(1);
               return a + b;
             }),
           ),
-          throwsA(isA<IsolatePoolException>()),
+          throwsA(isA<WorkgroupException>()),
         );
 
         // Verify isolate is still alive after error
-        final isHealthy = await pool.pingIsolate(0);
+        final isHealthy = await pool.probe(0);
         expect(isHealthy, true, reason: 'Isolate should remain alive');
 
         // Send valid jobs to verify pool continues working
-        final result1 = await pool.scheduleJob(SafeJob(10));
+        final result1 = await pool.dispatch(SafeJob(10));
         expect(result1, 20);
 
-        final result2 = await pool.scheduleJob(SafeJob(15));
+        final result2 = await pool.dispatch(SafeJob(15));
         expect(result2, 30);
 
         // Verify both isolates are still healthy
-        final isHealthy0 = await pool.pingIsolate(0);
+        final isHealthy0 = await pool.probe(0);
         expect(isHealthy0, true, reason: 'Isolate 0 should remain alive');
-        final isHealthy1 = await pool.pingIsolate(1);
+        final isHealthy1 = await pool.probe(1);
         expect(isHealthy1, true, reason: 'Isolate 1 should remain alive');
 
         controller.close();
@@ -930,28 +930,28 @@ void main() {
         final controller = StreamController<String>();
 
         // Schedule a safe job, then unsendable job, then another safe job
-        final safeFuture1 = pool.scheduleJob(SafeJob(1));
+        final safeFuture1 = pool.dispatch(SafeJob(1));
 
         await expectLater(
-          pool.scheduleJob(
+          pool.dispatch(
             TwoParamsJob<int, int, int>(5, 10, (a, b) {
               controller.add('bad');
               return a + b;
             }),
           ),
-          throwsA(isA<IsolatePoolException>()),
+          throwsA(isA<WorkgroupException>()),
         );
 
-        final safeFuture2 = pool.scheduleJob(SafeJob(2));
+        final safeFuture2 = pool.dispatch(SafeJob(2));
 
         // All safe jobs should complete successfully
         expect(await safeFuture1, 2);
         expect(await safeFuture2, 4);
 
         // Verify both isolates are still alive
-        var isHealthy = await pool.pingIsolate(0);
+        var isHealthy = await pool.probe(0);
         expect(isHealthy, true, reason: 'Isolate 0 should remain alive');
-        isHealthy = await pool.pingIsolate(1);
+        isHealthy = await pool.probe(1);
         expect(isHealthy, true, reason: 'Isolate 1 should remain alive');
 
         controller.close();
@@ -966,13 +966,13 @@ int _topLevelAdd(int a, int b) => a + b;
 // Example class for documentation
 class ExampleRepository {
   final StreamController<int> _streamController;
-  final IsolatePool pool;
+  final IsolateWorkgroup pool;
 
   ExampleRepository(this.pool) : _streamController = StreamController<int>();
 
   // ❌ BAD: Closure captures 'this' which includes _streamController
   Future<int> badExample() {
-    return pool.scheduleJob(
+    return pool.dispatch(
       TwoParamsJob(20, 22, (a, b) {
         // Access the captured _streamController to force the error
         final hasListener = _streamController.hasListener;
@@ -983,7 +983,7 @@ class ExampleRepository {
 
   // ✅ GOOD: Static function doesn't capture anything
   Future<int> goodExample() {
-    return pool.scheduleJob(
+    return pool.dispatch(
       TwoParamsJob(20, 22, _add),
     );
   }

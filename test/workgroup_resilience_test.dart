@@ -5,50 +5,50 @@ library;
 import 'dart:async';
 import 'dart:math' as math;
 
-import 'package:isolate_pool_2/isolate_pool_2.dart';
+import 'package:isolate_workgroup/isolate_workgroup.dart';
 import 'package:test/test.dart';
 
 // Job that always throws an exception
-class FailingJob extends PooledJob<int> {
+class FailingJob extends WorkgroupJob<int> {
   final String errorMessage;
   FailingJob(this.errorMessage);
 
   @override
-  Future<int> job() async {
+  Future<int> execute() async {
     throw Exception(errorMessage);
   }
 }
 
 // Job that throws after some work
-class PartiallyFailingJob extends PooledJob<int> {
+class PartiallyFailingJob extends WorkgroupJob<int> {
   final int workBeforeError;
   PartiallyFailingJob(this.workBeforeError);
 
   @override
-  Future<int> job() async {
+  Future<int> execute() async {
     await Future.delayed(Duration(milliseconds: workBeforeError));
     throw 'Failed after $workBeforeError ms';
   }
 }
 
 // Job that succeeds
-class SuccessfulJob extends PooledJob<int> {
+class SuccessfulJob extends WorkgroupJob<int> {
   final int value;
   SuccessfulJob(this.value);
 
   @override
-  Future<int> job() async => value;
+  Future<int> execute() async => value;
 }
 
 // Error prone job for resilience testing
-class ErrorProneJob extends PooledJob<String> {
+class ErrorProneJob extends WorkgroupJob<String> {
   final double errorProbability;
   final String successResult;
 
   ErrorProneJob(this.errorProbability, this.successResult);
 
   @override
-  Future<String> job() async {
+  Future<String> execute() async {
     await Future.delayed(Duration(milliseconds: 50));
     if (math.Random().nextDouble() < errorProbability) {
       throw 'Random failure occurred';
@@ -58,20 +58,20 @@ class ErrorProneJob extends PooledJob<String> {
 }
 
 // Synchronous throw job
-class SyncThrowJob extends PooledJob<int> {
+class SyncThrowJob extends WorkgroupJob<int> {
   @override
-  Future<int> job() {
+  Future<int> execute() {
     throw 'Synchronous throw';
   }
 }
 
 // Instance that throws errors
-class FailingInstance extends PooledInstance {
+class FailingInstance extends WorkgroupMember {
   @override
-  Future<void> init() async {}
+  Future<void> setup() async {}
 
   @override
-  Future<dynamic> receiveRemoteCall(Action action) async {
+  Future<dynamic> handle(WorkerCommand action) async {
     if (action is FailAction) {
       throw Exception('Instance action failed');
     } else if (action is SucceedAction) {
@@ -82,12 +82,12 @@ class FailingInstance extends PooledInstance {
 }
 
 // Instance that returns null
-class NullReturningInstance extends PooledInstance {
+class NullReturningInstance extends WorkgroupMember {
   @override
-  Future<void> init() async {}
+  Future<void> setup() async {}
 
   @override
-  Future<dynamic> receiveRemoteCall(Action action) async {
+  Future<dynamic> handle(WorkerCommand action) async {
     if (action is GetNullAction) {
       return null;
     }
@@ -96,12 +96,12 @@ class NullReturningInstance extends PooledInstance {
 }
 
 // Compute engine for performance tests
-class ComputeEngine extends PooledInstance {
+class ComputeEngine extends WorkgroupMember {
   @override
-  Future<void> init() async {}
+  Future<void> setup() async {}
 
   @override
-  Future<dynamic> receiveRemoteCall(Action action) async {
+  Future<dynamic> handle(WorkerCommand action) async {
     if (action is PrimeCheckAction) {
       return _isPrime(action.number);
     } else if (action is SimulateHeavyWorkAction) {
@@ -138,16 +138,16 @@ class ComputeEngine extends PooledInstance {
 }
 
 // Data store for transaction testing
-class DataStore extends PooledInstance {
+class DataStore extends WorkgroupMember {
   final Map<String, dynamic> _data = {};
 
   @override
-  Future<void> init() async {
+  Future<void> setup() async {
     await Future.delayed(Duration(milliseconds: 20));
   }
 
   @override
-  Future<dynamic> receiveRemoteCall(Action action) async {
+  Future<dynamic> handle(WorkerCommand action) async {
     if (action is GetDataAction) {
       return _data[action.key];
     } else if (action is SetDataAction) {
@@ -204,37 +204,37 @@ class DataStore extends PooledInstance {
 }
 
 // Actions for testing
-class FailAction extends Action {}
+class FailAction extends WorkerCommand {}
 
-class SucceedAction extends Action {
+class SucceedAction extends WorkerCommand {
   final int value;
   SucceedAction(this.value);
 }
 
-class GetNullAction extends Action {}
+class GetNullAction extends WorkerCommand {}
 
-class PrimeCheckAction extends Action {
+class PrimeCheckAction extends WorkerCommand {
   final int number;
   PrimeCheckAction(this.number);
 }
 
-class SimulateHeavyWorkAction extends Action {
+class SimulateHeavyWorkAction extends WorkerCommand {
   final int durationMs;
   SimulateHeavyWorkAction(this.durationMs);
 }
 
-class GetDataAction extends Action {
+class GetDataAction extends WorkerCommand {
   final String key;
   GetDataAction(this.key);
 }
 
-class SetDataAction extends Action {
+class SetDataAction extends WorkerCommand {
   final String key;
   final dynamic value;
   SetDataAction(this.key, this.value);
 }
 
-class GetAllKeysAction extends Action {}
+class GetAllKeysAction extends WorkerCommand {}
 
 class DataOperation {
   final String type;
@@ -243,7 +243,7 @@ class DataOperation {
   DataOperation(this.type, this.key, [this.value]);
 }
 
-class TransactionAction extends Action {
+class TransactionAction extends WorkerCommand {
   final List<DataOperation> operations;
   TransactionAction(this.operations);
 }
@@ -251,12 +251,12 @@ class TransactionAction extends Action {
 void main() {
   group('CRITICAL: Isolate Resilience After Exceptions', () {
     test('Isolate should remain healthy after job exception', () async {
-      final pool = IsolatePool(
+      final pool = IsolateWorkgroup(
         2,
-        healthConfig: const IsolateHealthConfig(
+        config: WorkgroupConfig(health: const WorkgroupHealthConfig(
           enabled: true,
           pingTimeout: Duration(milliseconds: 500),
-        ),
+        )),
       );
 
       // Suppress error logs during tests
@@ -264,14 +264,14 @@ void main() {
         // Silently ignore errors for cleaner test output
       });
 
-      await pool.start();
+      await pool.launch();
 
       // Step 1: Verify isolate 0 is healthy
-      final isHealthyBefore = await pool.pingIsolate(0);
+      final isHealthyBefore = await pool.probe(0);
       expect(isHealthyBefore, true, reason: 'Isolate should be healthy before job');
 
       // Step 2: Schedule a job that will fail on isolate 0
-      final failingFuture = pool.scheduleJob(FailingJob('Test exception'), 0);
+      final failingFuture = pool.dispatch(FailingJob('Test exception'), 0);
 
       // Step 3: Job should fail with exception
       await expectLater(
@@ -283,34 +283,34 @@ void main() {
       await Future.delayed(Duration(milliseconds: 100));
 
       // Step 5: CRITICAL TEST - Verify isolate is STILL healthy
-      final isHealthyAfter = await pool.pingIsolate(0);
+      final isHealthyAfter = await pool.probe(0);
       expect(isHealthyAfter, true, reason: 'CRITICAL: Isolate should remain healthy after job exception!');
 
       // Step 6: Verify isolate can still process jobs
-      final successFuture = pool.scheduleJob(SuccessfulJob(42), 0);
+      final successFuture = pool.dispatch(SuccessfulJob(42), 0);
       final result = await successFuture;
       expect(result, 42);
 
-      pool.stop();
+      pool.shutdown();
     });
 
     test('Multiple exceptions should not kill isolate', () async {
-      final pool = IsolatePool(
+      final pool = IsolateWorkgroup(
         1,
-        healthConfig: const IsolateHealthConfig(
+        config: WorkgroupConfig(health: const WorkgroupHealthConfig(
           enabled: true,
           pingTimeout: Duration(milliseconds: 500),
-        ),
+        )),
       );
 
       // Suppress error logs
       pool.setErrorHandler(IsolateErrorType.all, (error) {});
 
-      await pool.start();
+      await pool.launch();
 
       // Throw multiple exceptions
       for (int i = 0; i < 5; i++) {
-        final failingFuture = pool.scheduleJob(FailingJob('Exception $i'));
+        final failingFuture = pool.dispatch(FailingJob('Exception $i'));
 
         await expectLater(
           failingFuture,
@@ -318,40 +318,40 @@ void main() {
         );
 
         // Verify isolate is still healthy
-        final isHealthy = await pool.pingIsolate(0);
+        final isHealthy = await pool.probe(0);
         expect(isHealthy, true, reason: 'Isolate should remain healthy after exception #$i');
       }
 
       // Verify isolate can still work
-      final result = await pool.scheduleJob(SuccessfulJob(99));
+      final result = await pool.dispatch(SuccessfulJob(99));
       expect(result, 99);
 
-      pool.stop();
+      pool.shutdown();
     });
 
     test('Instance exceptions should not kill isolate', () async {
-      final pool = IsolatePool(
+      final pool = IsolateWorkgroup(
         2,
-        healthConfig: const IsolateHealthConfig(
+        config: WorkgroupConfig(health: const WorkgroupHealthConfig(
           enabled: true,
           pingTimeout: Duration(milliseconds: 500),
-        ),
+        )),
       );
 
       // Suppress error logs
       pool.setErrorHandler(IsolateErrorType.all, (error) {});
 
-      await pool.start();
+      await pool.launch();
 
       // Create instance on isolate 0
       final instance = await pool.addInstance(FailingInstance(), isolateIndex: 0);
 
       // Verify isolate is healthy
-      expect(await pool.pingIsolate(0), true);
+      expect(await pool.probe(0), true);
 
       // Trigger instance exception
       await expectLater(
-        instance.callRemoteMethod(FailAction()),
+        instance.invoke(FailAction()),
         throwsA(isA<Exception>()),
       );
 
@@ -359,66 +359,68 @@ void main() {
       await Future.delayed(Duration(milliseconds: 100));
 
       // CRITICAL: Isolate should still be healthy
-      final isHealthyAfter = await pool.pingIsolate(0);
+      final isHealthyAfter = await pool.probe(0);
       expect(isHealthyAfter, true, reason: 'CRITICAL: Isolate must survive instance exception!');
 
       // Verify instance still works
-      final result = await instance.callRemoteMethod<int>(SucceedAction(42));
+      final result = await instance.invoke<int>(SucceedAction(42));
       expect(result, 42);
 
-      pool.stop();
+      pool.shutdown();
     });
 
     test('Partial job execution before failure', () async {
-      final pool = IsolatePool(
+      final pool = IsolateWorkgroup(
         1,
-        healthConfig: const IsolateHealthConfig(
+        config: WorkgroupConfig(health: const WorkgroupHealthConfig(
           enabled: true,
           pingTimeout: Duration(milliseconds: 500),
-        ),
+        )),
       );
 
       // Suppress error logs
       pool.setErrorHandler(IsolateErrorType.all, (error) {});
 
-      await pool.start();
+      await pool.launch();
 
       // Job that does some work before failing
       await expectLater(
-        pool.scheduleJob(PartiallyFailingJob(50)),
+        pool.dispatch(PartiallyFailingJob(50)),
         throwsA(anything),
       );
 
       // Isolate should still be healthy
-      final isHealthy = await pool.pingIsolate(0);
+      final isHealthy = await pool.probe(0);
       expect(isHealthy, true);
 
-      pool.stop();
+      pool.shutdown();
     });
   });
 
   group('errorsAreFatal Parameter', () {
     test('With errorsAreFatal=true, job exceptions do NOT kill the isolate', () async {
-      final pool = IsolatePool(
+      final pool = IsolateWorkgroup(
         2,
-        healthConfig: const IsolateHealthConfig(
-          enabled: true,
-          pingTimeout: Duration(milliseconds: 500),
+        config: WorkgroupConfig(
+          fatalErrors: true,
+          health: const WorkgroupHealthConfig(
+            enabled: true,
+            pingTimeout: Duration(milliseconds: 500),
+          ),
         ),
       );
 
       // Suppress error logs during this test
       pool.setErrorHandler(IsolateErrorType.all, (error) {});
 
-      // errorsAreFatal: true
-      await pool.start(errorsAreFatal: true);
+      await pool.launch();
 
       // Step 1: Verify isolate 0 is healthy
-      final isHealthyBefore = await pool.pingIsolate(0);
+      final isHealthyBefore = await pool.probe(0);
       expect(isHealthyBefore, true);
 
       // Step 2: Schedule a failing job on isolate 0
-      final failingFuture = pool.scheduleJob(FailingJob('Error with errorsAreFatal=true'), 0);
+      final failingFuture = pool.dispatch(FailingJob('Error with errorsAreFatal=true'), 0);
 
       // Step 3: Job will fail
       try {
@@ -431,35 +433,37 @@ void main() {
       await Future.delayed(Duration(milliseconds: 200));
 
       // Step 5: IMPORTANT - Isolate is STILL ALIVE because job exceptions are caught
-      final isHealthyAfter = await pool.pingIsolate(0);
+      final isHealthyAfter = await pool.probe(0);
 
-      // With errorsAreFatal: true, the isolate is STILL ALIVE (job exceptions are caught)
+      // With fatalErrors: true, the isolate is STILL ALIVE (job exceptions are caught)
       expect(isHealthyAfter, true, reason: 'CORRECT: Job exceptions are caught, so errorsAreFatal has no effect');
 
-      pool.stop();
+      pool.shutdown();
     });
 
     test('With errorsAreFatal=false (default), exception does NOT kill isolate', () async {
-      final pool = IsolatePool(
+      final pool = IsolateWorkgroup(
         2,
-        healthConfig: const IsolateHealthConfig(
-          enabled: true,
-          pingTimeout: Duration(milliseconds: 500),
+        config: WorkgroupConfig(
+          fatalErrors: false,
+          health: const WorkgroupHealthConfig(
+            enabled: true,
+            pingTimeout: Duration(milliseconds: 500),
+          ),
         ),
       );
 
       // Suppress error logs during this test
       pool.setErrorHandler(IsolateErrorType.all, (error) {});
 
-      // Default: errorsAreFatal = false
-      await pool.start(errorsAreFatal: false);
+      await pool.launch();
 
       // Step 1: Verify isolate is healthy
-      expect(await pool.pingIsolate(0), true);
+      expect(await pool.probe(0), true);
 
       // Step 2: Schedule failing job
       try {
-        await pool.scheduleJob(FailingJob('Test error'), 0);
+        await pool.dispatch(FailingJob('Test error'), 0);
       } catch (e) {
         // Expected
       }
@@ -468,62 +472,62 @@ void main() {
       await Future.delayed(Duration(milliseconds: 200));
 
       // Step 4: Isolate is STILL HEALTHY
-      final isHealthyAfter = await pool.pingIsolate(0);
+      final isHealthyAfter = await pool.probe(0);
       expect(isHealthyAfter, true, reason: 'CORRECT: With errorsAreFatal=false, isolate survived the exception');
 
       // Verify isolate can still process jobs
-      final result = await pool.scheduleJob(SuccessfulJob(42), 0);
+      final result = await pool.dispatch(SuccessfulJob(42), 0);
       expect(result, 42);
 
-      pool.stop();
+      pool.shutdown();
     });
 
     test('BEST PRACTICE: Use default errorsAreFatal (false) for clarity', () async {
-      final pool = IsolatePool(1);
+      final pool = IsolateWorkgroup(1);
 
       // Suppress error logs during this test
       pool.setErrorHandler(IsolateErrorType.all, (error) {});
 
-      // RECOMMENDED: Use default (errorsAreFatal = false)
-      await pool.start(); // Default is false
+      // RECOMMENDED: Use default (fatalErrors = false)
+      await pool.launch(); // Default is false
 
       // Schedule 10 failing jobs
       for (int i = 0; i < 10; i++) {
         try {
-          await pool.scheduleJob(FailingJob('Error $i'));
+          await pool.dispatch(FailingJob('Error $i'));
         } catch (e) {
           // Expected
         }
       }
 
       // Isolate should still be healthy
-      expect(await pool.pingIsolate(0), true);
+      expect(await pool.probe(0), true);
 
       // And still able to process jobs
-      final result = await pool.scheduleJob(SuccessfulJob(99));
+      final result = await pool.dispatch(SuccessfulJob(99));
       expect(result, 99);
 
-      pool.stop();
+      pool.shutdown();
     });
   });
 
   group('Error Recovery and Continuity', () {
     test('Pool continues processing after individual job failures', () async {
-      final pool = IsolatePool(3);
+      final pool = IsolateWorkgroup(3);
 
       // Suppress error logs
       pool.setErrorHandler(IsolateErrorType.all, (error) {});
 
-      await pool.start();
+      await pool.launch();
 
       // Schedule 100 jobs, some will fail
       final futures = <Future<int>>[];
       for (int i = 0; i < 100; i++) {
         if (i % 10 == 0) {
           // Every 10th job fails
-          futures.add(pool.scheduleJob(FailingJob('Error $i')).catchError((e) => -1));
+          futures.add(pool.dispatch(FailingJob('Error $i')).catchError((e) => -1));
         } else {
-          futures.add(pool.scheduleJob(SuccessfulJob(i)));
+          futures.add(pool.dispatch(SuccessfulJob(i)));
         }
       }
 
@@ -536,56 +540,56 @@ void main() {
       expect(successes, 90);
       expect(failures, 10);
 
-      pool.stop();
+      pool.shutdown();
     });
 
     test('Instances remain functional after errors', () async {
-      final pool = IsolatePool(2);
+      final pool = IsolateWorkgroup(2);
 
       // Suppress error logs
       pool.setErrorHandler(IsolateErrorType.all, (error) {});
 
-      await pool.start();
+      await pool.launch();
 
       final instance = await pool.addInstance(FailingInstance());
 
       // Alternate between success and failure
       for (int i = 0; i < 5; i++) {
         if (i % 2 == 0) {
-          final result = await instance.callRemoteMethod<int>(SucceedAction(i));
+          final result = await instance.invoke<int>(SucceedAction(i));
           expect(result, i);
         } else {
           await expectLater(
-            instance.callRemoteMethod(FailAction()),
+            instance.invoke(FailAction()),
             throwsA(isA<Exception>()),
           );
         }
       }
 
-      pool.stop();
+      pool.shutdown();
     });
 
     test('Interleaved success and failure jobs', () async {
-      final pool = IsolatePool(
+      final pool = IsolateWorkgroup(
         2,
-        healthConfig: const IsolateHealthConfig(
+        config: WorkgroupConfig(health: const WorkgroupHealthConfig(
           enabled: true,
           pingTimeout: Duration(milliseconds: 500),
-        ),
+        )),
       );
 
       // Suppress error logs
       pool.setErrorHandler(IsolateErrorType.all, (error) {});
 
-      await pool.start();
+      await pool.launch();
 
       // Interleave successful and failing jobs
       final futures = <Future>[];
       for (int i = 0; i < 10; i++) {
         if (i % 2 == 0) {
-          futures.add(pool.scheduleJob(SuccessfulJob(i)).catchError((e) => -1));
+          futures.add(pool.dispatch(SuccessfulJob(i)).catchError((e) => -1));
         } else {
-          futures.add(pool.scheduleJob(FailingJob('Error $i')).catchError((e) => -1));
+          futures.add(pool.dispatch(FailingJob('Error $i')).catchError((e) => -1));
         }
       }
 
@@ -597,48 +601,50 @@ void main() {
 
       // Verify all isolates are still healthy
       for (int i = 0; i < 2; i++) {
-        final isHealthy = await pool.pingIsolate(i);
+        final isHealthy = await pool.probe(i);
         expect(isHealthy, true, reason: 'Isolate $i should be healthy');
       }
 
-      pool.stop();
+      pool.shutdown();
     });
   });
 
   group('Edge Cases and Complex Scenarios', () {
     test('Synchronous throw in job', () async {
-      final pool = IsolatePool(1);
+      final pool = IsolateWorkgroup(1);
 
       // Suppress error logs
       pool.setErrorHandler(IsolateErrorType.all, (error) {});
 
-      await pool.start();
+      await pool.launch();
 
       await expectLater(
-        pool.scheduleJob(SyncThrowJob()),
+        pool.dispatch(SyncThrowJob()),
         throwsA(anything),
       );
 
       // Verify isolate still works
-      final result = await pool.scheduleJob(SuccessfulJob(1));
+      final result = await pool.dispatch(SuccessfulJob(1));
       expect(result, 1);
 
-      pool.stop();
+      pool.shutdown();
     });
 
     test('Null return handling', () async {
-      final pool = IsolatePool(1);
-      await pool.start();
+      final pool = IsolateWorkgroup(1);
+      await pool.launch();
 
       final instance = await pool.addInstance(NullReturningInstance());
-      final result = await instance.callRemoteMethod(GetNullAction());
+      final result = await instance.invoke(GetNullAction());
       expect(result, null);
 
-      pool.stop();
+      pool.shutdown();
     });
 
     test('Exception during isolate initialization', () async {
-      final pool = IsolatePool(2);
+      final pool = IsolateWorkgroup(2, config: WorkgroupConfig(onSetup: () {
+        throw Exception('Init failed');
+      }));
 
       // Set up error handler
       final errors = <Object>[];
@@ -648,9 +654,7 @@ void main() {
 
       // Try to start with init function that throws
       try {
-        await pool.start(init: () {
-          throw Exception('Init failed');
-        });
+        await pool.launch();
       } catch (e) {
         // Expected
       }
@@ -660,23 +664,23 @@ void main() {
         // Error handler caught initialization error
       }
 
-      pool.stop();
+      pool.shutdown();
     });
 
     test('Error recovery and resilience', () async {
-      final pool = IsolatePool(4);
+      final pool = IsolateWorkgroup(4);
 
       // Set up error handler
       pool.setErrorHandler(IsolateErrorType.all, (error) {
         // Handle errors
       });
 
-      await pool.start();
+      await pool.launch();
 
       // Schedule mix of successful and failing jobs
       final jobs = <Future>[];
       for (int i = 0; i < 10; i++) {
-        jobs.add(pool.scheduleJob(ErrorProneJob(i.isEven ? 0.8 : 0.0, 'success$i')).catchError((e) => 'error$i'));
+        jobs.add(pool.dispatch(ErrorProneJob(i.isEven ? 0.8 : 0.0, 'success$i')).catchError((e) => 'error$i'));
       }
 
       final results = await Future.wait(jobs);
@@ -688,25 +692,25 @@ void main() {
       expect(successes + failures, 10);
       expect(failures, greaterThan(0)); // Should have some failures
 
-      pool.stop();
+      pool.shutdown();
     });
 
     test('Timeout handling for unresponsive isolates', () async {
-      final pool = IsolatePool(
+      final pool = IsolateWorkgroup(
         2,
-        healthConfig: const IsolateHealthConfig(
+        config: WorkgroupConfig(health: const WorkgroupHealthConfig(
           enabled: true,
           stalenessThreshold: Duration(seconds: 30),
           pingTimeout: Duration(milliseconds: 200),
-        ),
+        )),
       );
 
-      await pool.start();
+      await pool.launch();
 
       final engine = await pool.addInstance(ComputeEngine());
 
       // Start a very long task
-      final longTask = engine.callRemoteMethod(SimulateHeavyWorkAction(5000)); // 5 seconds
+      final longTask = engine.invoke(SimulateHeavyWorkAction(5000)); // 5 seconds
 
       // Wait a bit
       await Future.delayed(Duration(milliseconds: 300));
@@ -716,15 +720,15 @@ void main() {
       expect(health.length, 2);
 
       // Cancel by stopping pool
-      pool.stop();
+      pool.shutdown();
 
       // Long task should fail
-      await expectLater(longTask, throwsA(isA<IsolatePoolJobCancelledException>()));
+      await expectLater(longTask, throwsA(isA<WorkgroupJobAbortedException>()));
     });
 
     test('Race condition prevention', () async {
-      final pool = IsolatePool(4);
-      await pool.start();
+      final pool = IsolateWorkgroup(4);
+      await pool.launch();
 
       final store = await pool.addInstance(DataStore());
 
@@ -732,29 +736,29 @@ void main() {
       final increments = <Future>[];
       for (int i = 0; i < 100; i++) {
         increments.add(() async {
-          final current = await store.callRemoteMethod(GetDataAction('counter')) ?? 0;
-          await store.callRemoteMethod(SetDataAction('counter', current + 1));
+          final current = await store.invoke(GetDataAction('counter')) ?? 0;
+          await store.invoke(SetDataAction('counter', current + 1));
         }());
       }
 
       await Future.wait(increments);
 
-      final finalCount = await store.callRemoteMethod(GetDataAction('counter'));
+      final finalCount = await store.invoke(GetDataAction('counter'));
       // Due to race conditions, this might not be exactly 100
       expect(finalCount, greaterThan(0));
       expect(finalCount, lessThanOrEqualTo(100));
 
-      pool.stop();
+      pool.shutdown();
     });
 
     test('Transaction handling', () async {
-      final pool = IsolatePool(3);
-      await pool.start();
+      final pool = IsolateWorkgroup(3);
+      await pool.launch();
 
       final store = await pool.addInstance(DataStore());
 
       // Set initial data
-      await store.callRemoteMethod(SetDataAction('user:1', {'name': 'Alice', 'age': 30}));
+      await store.invoke(SetDataAction('user:1', {'name': 'Alice', 'age': 30}));
 
       // Test transaction
       final transactionOps = [
@@ -763,138 +767,138 @@ void main() {
         DataOperation('set', 'user:3', {'name': 'Charlie', 'age': 35}),
       ];
 
-      final success = await store.callRemoteMethod<bool>(TransactionAction(transactionOps));
+      final success = await store.invoke<bool>(TransactionAction(transactionOps));
       expect(success, true);
 
       // Verify transaction results
-      final updatedUser = await store.callRemoteMethod(GetDataAction('user:1'));
+      final updatedUser = await store.invoke(GetDataAction('user:1'));
       expect(updatedUser['age'], 31);
 
-      pool.stop();
+      pool.shutdown();
     });
 
     test('Health check detects actual healthy isolate', () async {
-      final pool = IsolatePool(
+      final pool = IsolateWorkgroup(
         2,
-        healthConfig: const IsolateHealthConfig(
+        config: WorkgroupConfig(health: const WorkgroupHealthConfig(
           enabled: true,
           pingTimeout: Duration(milliseconds: 200),
           maxConsecutiveFailures: 1,
-        ),
+        )),
       );
-      await pool.start();
+      await pool.launch();
 
       // Normal health check should pass
-      expect(await pool.pingIsolate(0), true);
+      expect(await pool.probe(0), true);
 
       // Verify both isolates are tracked as healthy
       expect(pool.isIsolateHealthy(0), true);
       expect(pool.isIsolateHealthy(1), true);
 
-      pool.stop();
+      pool.shutdown();
     });
   });
 
   group('Health Configuration Variants', () {
     test('Default health config', () async {
-      final pool = IsolatePool(
+      final pool = IsolateWorkgroup(
         2,
-        healthConfig: const IsolateHealthConfig(
+        config: WorkgroupConfig(health: const WorkgroupHealthConfig(
           enabled: true,
-        ),
+        )),
       );
 
-      await pool.start();
+      await pool.launch();
 
       // Should work with default settings
-      expect(await pool.pingIsolate(0), true);
-      expect(await pool.pingIsolate(1), true);
+      expect(await pool.probe(0), true);
+      expect(await pool.probe(1), true);
 
-      pool.stop();
+      pool.shutdown();
     });
 
     test('Disabled health config', () async {
-      final pool = IsolatePool(
+      final pool = IsolateWorkgroup(
         2,
-        healthConfig: const IsolateHealthConfig.disabled(),
+        config: WorkgroupConfig(health: const WorkgroupHealthConfig.disabled()),
       );
 
-      await pool.start();
+      await pool.launch();
 
       // With health checking disabled, should return true without actual ping
-      expect(await pool.pingIsolate(0), true);
+      expect(await pool.probe(0), true);
       expect(pool.isIsolateHealthy(0), true);
 
-      pool.stop();
+      pool.shutdown();
     });
 
     test('Aggressive health config', () async {
-      final pool = IsolatePool(
+      final pool = IsolateWorkgroup(
         2,
-        healthConfig: const IsolateHealthConfig.aggressive(),
+        config: WorkgroupConfig(health: const WorkgroupHealthConfig.aggressive()),
       );
 
-      await pool.start();
+      await pool.launch();
 
       // Aggressive config has short timeouts
-      expect(await pool.pingIsolate(0), true);
-      expect(await pool.pingIsolate(1), true);
+      expect(await pool.probe(0), true);
+      expect(await pool.probe(1), true);
 
-      pool.stop();
+      pool.shutdown();
     });
 
     test('Relaxed health config', () async {
-      final pool = IsolatePool(
+      final pool = IsolateWorkgroup(
         2,
-        healthConfig: const IsolateHealthConfig.relaxed(),
+        config: WorkgroupConfig(health: const WorkgroupHealthConfig.relaxed()),
       );
 
-      await pool.start();
+      await pool.launch();
 
       // Relaxed config has longer timeouts
-      expect(await pool.pingIsolate(0), true);
-      expect(await pool.pingIsolate(1), true);
+      expect(await pool.probe(0), true);
+      expect(await pool.probe(1), true);
 
-      pool.stop();
+      pool.shutdown();
     });
   });
 
   group('Isolate Index Specific Tests', () {
-    test('scheduleJob targets correct isolate', () async {
-      final pool = IsolatePool(2);
-      await pool.start();
+    test('dispatch targets correct isolate', () async {
+      final pool = IsolateWorkgroup(2);
+      await pool.launch();
 
       // Schedule job to isolate 0
-      final result1 = await pool.scheduleJob(SuccessfulJob(10), 0);
+      final result1 = await pool.dispatch(SuccessfulJob(10), 0);
       expect(result1, 10);
 
       // Schedule job to isolate 1
-      final result2 = await pool.scheduleJob(SuccessfulJob(20), 1);
+      final result2 = await pool.dispatch(SuccessfulJob(20), 1);
       expect(result2, 20);
 
-      pool.stop();
+      pool.shutdown();
     });
 
-    test('scheduleJob throws on invalid isolate index', () async {
-      final pool = IsolatePool(2);
-      await pool.start();
+    test('dispatch throws on invalid isolate index', () async {
+      final pool = IsolateWorkgroup(2);
+      await pool.launch();
 
       expect(
-        () => pool.scheduleJob(SuccessfulJob(1), 5),
-        throwsA(isA<IsolatePoolException>()),
+        () => pool.dispatch(SuccessfulJob(1), 5),
+        throwsA(isA<WorkgroupException>()),
       );
 
       expect(
-        () => pool.scheduleJob(SuccessfulJob(1), -2),
-        throwsA(isA<IsolatePoolException>()),
+        () => pool.dispatch(SuccessfulJob(1), -2),
+        throwsA(isA<WorkgroupException>()),
       );
 
-      pool.stop();
+      pool.shutdown();
     });
 
     test('addInstance targets correct isolate', () async {
-      final pool = IsolatePool(2);
-      await pool.start();
+      final pool = IsolateWorkgroup(2);
+      await pool.launch();
 
       // Create instance on isolate 0
       final instance1 = await pool.addInstance(DataStore(), isolateIndex: 0);
@@ -904,15 +908,15 @@ void main() {
       final instance2 = await pool.addInstance(DataStore(), isolateIndex: 1);
       expect(instance2.isolateId, equals(1));
 
-      pool.stop();
+      pool.shutdown();
     });
 
     test('addInstance load balances when isolateIndex is -1', () async {
-      final pool = IsolatePool(2);
-      await pool.start();
+      final pool = IsolateWorkgroup(2);
+      await pool.launch();
 
       // Create multiple instances without specifying isolate
-      final instances = <PooledInstanceProxy>[];
+      final instances = <MemberProxy>[];
 
       for (var i = 0; i < 4; i++) {
         final instance = await pool.addInstance(DataStore());
@@ -923,12 +927,12 @@ void main() {
       final isolatesUsed = instances.map((w) => w.isolateId).toSet();
       expect(isolatesUsed.length, greaterThan(1), reason: 'Instances should be load balanced');
 
-      pool.stop();
+      pool.shutdown();
     });
 
     test('destroyInstance handles double-destroy gracefully', () async {
-      final pool = IsolatePool(2);
-      await pool.start();
+      final pool = IsolateWorkgroup(2);
+      await pool.launch();
 
       final instance = await pool.addInstance(DataStore());
 
@@ -938,49 +942,49 @@ void main() {
       // Second destroy should not throw (prints warning instead)
       expect(() => pool.destroyInstance(instance), returnsNormally);
 
-      pool.stop();
+      pool.shutdown();
     });
 
     test('destroyInstance with isolateIndex parameter', () async {
-      final pool = IsolatePool(2);
-      await pool.start();
+      final pool = IsolateWorkgroup(2);
+      await pool.launch();
 
       final instance = await pool.addInstance(DataStore(), isolateIndex: 1);
 
       // Destroy from specific isolate
       expect(() => pool.destroyInstance(instance, isolate: 1), returnsNormally);
 
-      pool.stop();
+      pool.shutdown();
     });
 
     test('destroyInstance throws on invalid isolateIndex', () async {
-      final pool = IsolatePool(2);
-      await pool.start();
+      final pool = IsolateWorkgroup(2);
+      await pool.launch();
 
       final instance = await pool.addInstance(DataStore());
 
       expect(
         () => pool.destroyInstance(instance, isolate: 10),
-        throwsA(isA<IsolatePoolException>()),
+        throwsA(isA<WorkgroupException>()),
       );
 
-      pool.stop();
+      pool.shutdown();
     });
 
     test('Isolate index boundary validation', () async {
-      final pool = IsolatePool(3);
-      await pool.start();
+      final pool = IsolateWorkgroup(3);
+      await pool.launch();
 
       // Valid index
       final validInstance = await pool.addInstance(DataStore(), isolateIndex: 2);
       expect(validInstance.isolateId, 2);
 
       // Invalid indices
-      expect(() async => await pool.addInstance(DataStore(), isolateIndex: 3), throwsA(isA<IsolatePoolException>()));
+      expect(() async => await pool.addInstance(DataStore(), isolateIndex: 3), throwsA(isA<WorkgroupException>()));
 
-      expect(() async => await pool.addInstance(DataStore(), isolateIndex: -2), throwsA(isA<IsolatePoolException>()));
+      expect(() async => await pool.addInstance(DataStore(), isolateIndex: -2), throwsA(isA<WorkgroupException>()));
 
-      pool.stop();
+      pool.shutdown();
     });
   });
 }
