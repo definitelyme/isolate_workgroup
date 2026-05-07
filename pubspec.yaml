@@ -1,5 +1,7 @@
 name: isolate_workgroup
-description: A Dart package for managing a dynamic group of isolates — supports one-off job dispatch, persistent members, health monitoring, and runtime pool resizing.
+description: A Dart package for managing a dynamic group of isolates — supports
+  one-off job dispatch, persistent members, health monitoring, and runtime
+  workgroup resizing.
 version: 1.0.0
 
 environment:
