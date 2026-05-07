@@ -3,11 +3,11 @@ import 'dart:isolate';
 
 import '../enums.dart';
 import '../exceptions.dart';
-import '../isolate_pool.dart';
-import '../pooled_instance.dart';
+import '../workgroup.dart';
+import '../workgroup_member.dart';
 import 'messages.dart';
 
-extension IsolatePoolExtensions on IsolatePool {
+extension IsolateWorkgroupExtensions on IsolateWorkgroup {
   /// Sends a request to an instance in the pool.
   ///
   /// This method sends an action to a specific instance in the pool and returns
@@ -25,21 +25,21 @@ extension IsolatePoolExtensions on IsolatePool {
   /// - The instance is not yet started
   /// - The pool has been stopped
   /// - The specified isolate index is invalid
-  Future<R> sendRequest<R>(int instanceId, Action action, [int? isolateIndex]) async {
+  Future<R> sendRequest<R>(int instanceId, WorkerCommand action, [int? isolateIndex]) async {
     isolateIndex ??= -1;
 
-    if (state == IsolatePoolState.stopped) {
-      throw IsolatePoolStoppedException('Isolate pool has been stopped, cannot send request');
+    if (state == WorkgroupState.disposed) {
+      throw WorkgroupInactiveException('Isolate pool has been stopped, cannot send request');
     }
 
     if (!pooledInstances.containsKey(instanceId)) {
-      throw NoSuchIsolateInstanceException('Cannot send request to non-existing instance, instanceId $instanceId');
+      throw WorkgroupMemberNotFoundException('Cannot send request to non-existing instance, instanceId $instanceId');
     }
 
     final instance = pooledInstances[instanceId]!;
 
-    if (instance.state == PooledInstanceStatus.starting) {
-      throw IsolateNotYetStartedException('Cannot send request to instance in Starting state, instanceId $instanceId');
+    if (instance.state == WorkgroupMemberStatus.starting) {
+      throw WorkgroupNotReadyException('Cannot send request to instance in Starting state, instanceId $instanceId');
     }
 
     // Use the specified isolate index if provided, otherwise use the instance's original isolate
@@ -47,7 +47,7 @@ extension IsolatePoolExtensions on IsolatePool {
 
     // Validate the isolate index
     if (targetIsolate > mainToWorkerSendPorts.length - 1) {
-      throw IsolatePoolException(
+      throw WorkgroupException(
         "Invalid isolate index $targetIsolate (only ${mainToWorkerSendPorts.length} isolates available). Valid indices are 0...${mainToWorkerSendPorts.length - 1}",
       );
     }
@@ -62,7 +62,7 @@ extension IsolatePoolExtensions on IsolatePool {
     if (healthConfig.enabled && healthConfig.checkBeforeDispatching) {
       final isHealthy = await ensureIsolateHealthyInternal(targetIsolate);
       if (!isHealthy) {
-        throw IsolateDeadException(
+        throw WorkgroupMemberDeadException(
           targetIsolate,
           'Isolate #$targetIsolate hosting instance $instanceId is not responsive',
         );
@@ -95,7 +95,7 @@ abstract class InternalPooledInstance {
   /// @nodoc
   ///
   /// Internal method to set the send port.
-  /// This method is only intended for internal use by the isolate_pool_2 package.
+  /// This method is only intended for internal use by the isolate_workgroup package.
   ///
   /// WARNING: Do not call this method from your application code.
   set sendPort(SendPort port) => _sendPort = port;

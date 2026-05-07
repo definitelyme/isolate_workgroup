@@ -1,7 +1,7 @@
-part of '../isolate_pool.dart';
+part of '../workgroup.dart';
 
-class IsolateHealthInfo {
-  IsolateHealthInfo._({
+class WorkgroupHealthInfo {
+  WorkgroupHealthInfo._({
     required this.isolateIndex,
     DateTime? lastKnownGood,
     bool? confirmedDead,
@@ -18,7 +18,7 @@ class IsolateHealthInfo {
   DateTime _lastKnownGood;
 
   @override
-  String toString() => 'IsolateHealthInfo('
+  String toString() => 'WorkgroupHealthInfo('
       'index: $isolateIndex, '
       'lastKnownGood: $_lastKnownGood, '
       'confirmedDead: $_confirmedDead, '
