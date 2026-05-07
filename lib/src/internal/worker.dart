@@ -1,11 +1,11 @@
 import 'dart:async';
 import 'dart:isolate';
 
-import 'package:isolate_pool_2/src/internal/utils.dart';
+import 'package:isolate_workgroup/src/internal/utils.dart';
 
 import '../enums.dart';
 import '../exceptions.dart';
-import '../pooled_instance.dart';
+import '../workgroup_member.dart';
 import 'export.dart';
 
 /// Processes a response message
@@ -13,7 +13,7 @@ void processResponse(Response response, [Map<int, Completer>? requestCompleters]
   final completers = requestCompleters ?? isolateRequestCompleters;
 
   if (!completers.containsKey(response.requestId)) {
-    throw BadResponseReceivedException('Response to non-existent request (ID: ${response.requestId}) received');
+    throw InvalidWorkgroupResponseException('Response to non-existent request (ID: ${response.requestId}) received');
   }
 
   final completer = completers[response.requestId]!;
@@ -26,17 +26,17 @@ void processResponse(Response response, [Map<int, Completer>? requestCompleters]
 
       if (error is Exception || error is Error) {
         completer.completeError(error, stackTrace);
-      } else if (error is IsolateError) {
+      } else if (error is WorkgroupIsolateError) {
         final combinedError = error.withCombinedStackTrace(callerStackTrace);
         completer.completeError(combinedError.unwrappedError, combinedError.originalStackTrace);
       } else {
-        completer.completeError(IsolateError(error, response.isolateIndex, error.toString(), stackTrace), callerStackTrace);
+        completer.completeError(WorkgroupIsolateError(error, response.isolateIndex, error.toString(), stackTrace), callerStackTrace);
       }
     } else {
       completer.complete(response.result);
     }
   } else {
-    throw BadResponseReceivedException('Response to non-existent request (ID: ${response.requestId}) received\n'
+    throw InvalidWorkgroupResponseException('Response to non-existent request (ID: ${response.requestId}) received\n'
         'This can happen if the request was already completed/cancelled.');
   }
 
@@ -56,7 +56,7 @@ void pooledIsolateBody(PooledIsolateParams params) async {
         final errorMsg = 'Isolate [${params.isolateIndex}] received request for unknown instance ${message.instanceId}';
         print(errorMsg);
 
-        final error = NoSuchIsolateInstanceException(errorMsg);
+        final error = WorkgroupMemberNotFoundException(errorMsg);
         final response = Response(message.id, null, error, StackTrace.current, params.isolateIndex);
         params.sendPort.send(response);
         params.errorSendPort?.send(error);
@@ -66,39 +66,39 @@ void pooledIsolateBody(PooledIsolateParams params) async {
       final instance = workerInstances[message.instanceId]!;
 
       try {
-        final result = await instance.receiveRemoteCall(message.action);
+        final result = await instance.handle(message.action);
         final response = Response(message.id, result, null, null, params.isolateIndex);
         params.sendPort.send(response);
       } catch (e, st) {
         final response = Response(message.id, null, e, st, params.isolateIndex);
         params.sendPort.send(response);
-        params.errorSendPort?.send(IsolateError(e, params.isolateIndex, 'Error processing request: ${e.toString()}', st));
+        params.errorSendPort?.send(WorkgroupIsolateError(e, params.isolateIndex, 'Error processing request: ${e.toString()}', st));
       }
     } else if (message is Response) {
       if (!isolateRequestCompleters.containsKey(message.requestId)) {
         final errorMsg = 'Isolate ${params.isolateIndex} received response for unknown request ${message.requestId}';
         // print(errorMsg);
-        params.errorSendPort?.send(BadResponseReceivedException(errorMsg, StackTrace.current));
+        params.errorSendPort?.send(InvalidWorkgroupResponseException(errorMsg, StackTrace.current));
         return;
       }
 
       processResponse(message);
-    } else if (message is PooledInstance) {
+    } else if (message is WorkgroupMember) {
       try {
-        await message.init();
+        await message.setup();
         message.sendPort = params.sendPort;
-        workerInstances[message.instanceId] = message;
-        params.sendPort.send(CreationResponse(message.instanceId, null));
+        workerInstances[message.memberId] = message;
+        params.sendPort.send(CreationResponse(message.memberId, null));
       } catch (e, st) {
-        params.sendPort.send(CreationResponse(message.instanceId, e, st));
-        params.errorSendPort?.send(IsolateError(e, params.isolateIndex, 'Error creating instance: ${e.toString()}', st));
+        params.sendPort.send(CreationResponse(message.memberId, e, st));
+        params.errorSendPort?.send(WorkgroupIsolateError(e, params.isolateIndex, 'Error creating instance: ${e.toString()}', st));
       }
     } else if (message is DestroyRequest) {
       if (!workerInstances.containsKey(message.instanceId)) {
         final errorMsg = 'Isolate ${params.isolateIndex} received destroy request for unknown instance ${message.instanceId}';
         // print(errorMsg);
 
-        params.errorSendPort?.send(BadResponseReceivedException(errorMsg, StackTrace.current));
+        params.errorSendPort?.send(InvalidWorkgroupResponseException(errorMsg, StackTrace.current));
 
         // Attempt to remove the instance from the map, just to be safe
         workerInstances.remove(message.instanceId);
@@ -110,30 +110,30 @@ void pooledIsolateBody(PooledIsolateParams params) async {
         await instance?.dispose();
       } catch (e, st) {
         // print('Error during instance disposal: $e\n$st');
-        params.errorSendPort?.send(IsolateError(e, params.isolateIndex, 'Error disposing instance: ${e.toString()}', st));
+        params.errorSendPort?.send(WorkgroupIsolateError(e, params.isolateIndex, 'Error disposing instance: ${e.toString()}', st));
       } finally {
         workerInstances.remove(message.instanceId);
       }
-    } else if (message is PooledJobRequest) {
+    } else if (message is WorkgroupJobRequest) {
       try {
-        final result = await message.job.job();
-        params.sendPort.send(PooledJobResult(result, message.jobIndex, message.isolateIndex, null, null));
+        final result = await message.job.execute();
+        params.sendPort.send(WorkgroupJobResult(result, message.jobIndex, message.isolateIndex, null, null));
       } catch (e, st) {
-        final error = IsolateError(e, params.isolateIndex, 'Error executing job: ${e.toString()}', st);
-        params.sendPort.send(PooledJobResult(null, message.jobIndex, message.isolateIndex, error, st));
+        final error = WorkgroupIsolateError(e, params.isolateIndex, 'Error executing job: ${e.toString()}', st);
+        params.sendPort.send(WorkgroupJobResult(null, message.jobIndex, message.isolateIndex, error, st));
         params.errorSendPort?.send(error);
       }
     } else if (message is ExternalJob) {
       try {
-        await message.job.job();
+        await message.job.execute();
       } catch (e, st) {
-        final error = IsolateError(e, params.isolateIndex, 'Error executing external job: ${e.toString()}', st);
+        final error = WorkgroupIsolateError(e, params.isolateIndex, 'Error executing external job: ${e.toString()}', st);
         params.errorSendPort?.send(error);
       }
     } else {
       // print('Isolate ${params.isolateIndex} received unknown message type: ${message.runtimeType}');
 
-      params.errorSendPort?.send(IsolateError(
+      params.errorSendPort?.send(WorkgroupIsolateError(
         ArgumentError('Unknown message type: ${message.runtimeType}'),
         params.isolateIndex,
         'Unknown message type received',
@@ -145,7 +145,7 @@ void pooledIsolateBody(PooledIsolateParams params) async {
   try {
     await params.initFunc?.call();
   } catch (e, st) {
-    final error = IsolateInitializationException(params.isolateIndex, 'Error during initialization: ${e.toString()}', st);
+    final error = WorkgroupSetupException(params.isolateIndex, 'Error during initialization: ${e.toString()}', st);
     params.errorSendPort?.send(error);
     params.stopwatch.stop();
 
@@ -167,7 +167,7 @@ void pooledIsolateBody(PooledIsolateParams params) async {
 
   if (params.policy == InitializationPolicy.concurrent) {
     if (!isInTest) {
-      print('[isolate_pool_2]: Isolate #${params.isolateIndex} initialized, '
+      print('[isolate_workgroup]: Isolate #${params.isolateIndex} initialized, '
           'took ${params.stopwatch.elapsedMilliseconds} milliseconds');
     }
   }
