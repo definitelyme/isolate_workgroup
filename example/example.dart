@@ -5,30 +5,30 @@ import 'dart:typed_data';
 import 'package:isolate_workgroup/isolate_workgroup.dart';
 
 void main(List<String> arguments) async {
-  // Start and await for the pool to complete launching
-  var pool = IsolateWorkgroup(4);
-  await pool.launch();
+  // Start and await for the workgroup to finish launching
+  var workgroup = IsolateWorkgroup(4);
+  await workgroup.launch();
 
   // SAMPLE 1, Workgroup Job
-  await multiplierJobs(pool);
+  await multiplierJobs(workgroup);
 
   // SAMPLE 2, Workgroup Member
-  await randomViaWorkgroupMembers(pool);
+  await randomViaWorkgroupMembers(workgroup);
 
-  // Stop isolate and let the process finish
-  pool.shutdown();
+  // Shut the workgroup down and let the process finish
+  workgroup.shutdown();
 }
 
 ////////////////////////////
 // SAMPLE 1, WorkgroupJob<T> //
 ////////////////////////////
 
-Future<void> multiplierJobs(IsolateWorkgroup pool) async {
+Future<void> multiplierJobs(IsolateWorkgroup workgroup) async {
   print('\n\nEXAMPLE1\n');
   var futures = <Future<int>>[];
-  // Schedule mutliple jobs on the isolate workgroup and store all futures returned
+  // Dispatch multiple jobs to the workgroup and store all returned futures
   for (var i = 0; i < 15; i++) {
-    futures.add(pool.dispatch<int>(DoubleNumbersJob(101 + i)));
+    futures.add(workgroup.dispatch<int>(DoubleNumbersJob(101 + i)));
   }
 
   // Wait for all futures to complete and collect the results
@@ -55,14 +55,14 @@ class DoubleNumbersJob extends WorkgroupJob<int> {
 // SAMPLE 2, WorkgroupMember //
 //////////////////////////////
 
-Future<void> randomViaWorkgroupMembers(IsolateWorkgroup pool) async {
+Future<void> randomViaWorkgroupMembers(IsolateWorkgroup workgroup) async {
   print('\n\nEXAMPLE2\n');
   var proxies = List<MemberProxy>.empty(growable: true);
 
-  // Create workgroup members in isolates inside pool,
-  // collect proxy objects to comminucate with them from within main isolate
+  // Create workgroup members inside the workers, collecting proxy objects to
+  // communicate with them from the main isolate
   for (var i = 0; i < 4; i++) {
-    proxies.add(await pool.addInstance(RandomBytesGenerator()));
+    proxies.add(await workgroup.addInstance(RandomBytesGenerator()));
   }
 
   // Call remote methods via proxies

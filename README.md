@@ -23,17 +23,17 @@ The workgroup can accept one-time requests (workgroup jobs) mimicking Flutter's 
 import 'package:isolate_workgroup/isolate_workgroup.dart';
 
 void main() async {
-  // Create a workgroup with 4 isolates
-  final pool = IsolateWorkgroup(4);
-  
+  // Create a workgroup with 4 worker isolates
+  final workgroup = IsolateWorkgroup(4);
+
   // Start the workgroup
-  await pool.launch();
-  
+  await workgroup.launch();
+
   // Dispatch a job
-  final result = await pool.dispatch(MyJob());
-  
-  // Stop the workgroup when done
-  pool.shutdown();
+  final result = await workgroup.dispatch(MyJob());
+
+  // Shut the workgroup down when done
+  workgroup.shutdown();
 }
 
 // Define a job
@@ -54,16 +54,16 @@ The second way of using the APIs is to have a member created in one of the workg
 import 'package:isolate_workgroup/isolate_workgroup.dart';
 
 void main() async {
-  final pool = IsolateWorkgroup(4);
-  await pool.launch();
+  final workgroup = IsolateWorkgroup(4);
+  await workgroup.launch();
   
   // Create a persistent member
-  final proxy = await pool.addInstance(MyMember());
+  final proxy = await workgroup.addInstance(MyMember());
   
   // Call methods on the member
   final result = await proxy.invoke(MyAction('parameter'));
   
-  pool.shutdown();
+  workgroup.shutdown();
 }
 
 // Define a member

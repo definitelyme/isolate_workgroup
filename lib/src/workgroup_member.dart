@@ -71,10 +71,10 @@ class MemberProxy<T> {
   const MemberProxy({
     required this.memberId,
     required this.workerIndex,
-    required IsolateWorkgroup pool,
+    required IsolateWorkgroup workgroup,
     required this.remoteCallback,
     SendPort? sendPort,
-  })  : _pool = pool,
+  })  : _workgroup = workgroup,
         _sendPort = sendPort;
 
   /// Unique ID that matches the [WorkgroupMember.memberId] in the worker isolate.
@@ -95,7 +95,7 @@ class MemberProxy<T> {
   final MemberCallback<T>? remoteCallback;
 
   final SendPort? _sendPort;
-  final IsolateWorkgroup _pool;
+  final IsolateWorkgroup _workgroup;
 
   SendPort? get sendPort => _sendPort;
 
@@ -106,14 +106,14 @@ class MemberProxy<T> {
   Future<R> invoke<R>(WorkerCommand command, {int? isolate}) {
     isolate ??= -1;
 
-    if (_pool.state == WorkgroupState.disposed) {
+    if (_workgroup.state == WorkgroupState.disposed) {
       throw WorkgroupInactiveException(
         'Workgroup has been shut down, cannot invoke member method',
       );
     }
 
     final targetIsolateIndex = isolate >= 0 ? isolate : workerIndex;
-    return _pool.sendRequest<R>(memberId, command, targetIsolateIndex);
+    return _workgroup.sendRequest<R>(memberId, command, targetIsolateIndex);
   }
 
   // Internal compatibility shim so existing internal code compiles unchanged.

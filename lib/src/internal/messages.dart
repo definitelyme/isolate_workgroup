@@ -6,7 +6,7 @@ import '../workgroup_member.dart';
 import '../workgroup_job.dart';
 import 'export.dart';
 
-/// Message to request an action on a pooled instance
+/// Message to request an action on a workgroup member
 class Request {
   Request(this.instanceId, this.action) : id = requestIdCounter++;
 
@@ -50,7 +50,7 @@ class CreationResponse {
   }
 }
 
-/// Message to request destruction of a pooled instance
+/// Message to request destruction of a workgroup member
 class DestroyRequest {
   const DestroyRequest(this.instanceId);
 
@@ -65,9 +65,9 @@ class DestroyRequest {
 /// Instance status
 enum WorkgroupMemberStatus { starting, started }
 
-/// Entry in the instance map
-class InstanceMapEntry<T> {
-  InstanceMapEntry(this.instance, this.isolateIndex);
+/// Entry in the workgroup's member map.
+class MemberEntry<T> {
+  MemberEntry(this.instance, this.isolateIndex);
 
   final MemberProxy<T> instance;
   final int isolateIndex;
@@ -76,13 +76,13 @@ class InstanceMapEntry<T> {
 
   @override
   String toString() {
-    return 'InstanceMapEntry(instance: $instance, isolateIndex: $isolateIndex, state: $state)';
+    return 'MemberEntry(instance: $instance, isolateIndex: $isolateIndex, state: $state)';
   }
 }
 
-/// Parameters for pooled isolate initialization
-class PooledIsolateParams {
-  const PooledIsolateParams(
+/// Parameters for worker isolate initialization
+class WorkerLaunchParams {
+  const WorkerLaunchParams(
     this.sendPort,
     this.errorSendPort,
     this.isolateIndex,
@@ -106,10 +106,10 @@ class PooledIsolateParams {
 
   @override
   String toString() {
-    return 'PooledIsolateParams(sendPort: $sendPort, errorSendPort: $errorSendPort, isolateIndex: $isolateIndex, initFunc: $initFunc, nextIsolateIndex: $nextIsolateIndex, policy: $policy, initializationError: $initializationError)';
+    return 'WorkerLaunchParams(sendPort: $sendPort, errorSendPort: $errorSendPort, isolateIndex: $isolateIndex, initFunc: $initFunc, nextIsolateIndex: $nextIsolateIndex, policy: $policy, initializationError: $initializationError)';
   }
 
-  PooledIsolateParams copyWith({
+  WorkerLaunchParams copyWith({
     SendPort? sendPort,
     SendPort? errorSendPort,
     int? isolateIndex,
@@ -120,7 +120,7 @@ class PooledIsolateParams {
     dynamic initializationError,
     String? debugName,
   }) {
-    return PooledIsolateParams(
+    return WorkerLaunchParams(
       sendPort ?? this.sendPort,
       errorSendPort ?? this.errorSendPort,
       isolateIndex ?? this.isolateIndex,

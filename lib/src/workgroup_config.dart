@@ -21,7 +21,7 @@ class WorkgroupConfig {
 
   /// Generates a debug label for isolate [index].
   ///
-  /// Defaults to `'pooled_isolate_N'` when null.
+  /// Defaults to `'workgroup_worker_N'` when null.
   final String Function(int index)? labelBuilder;
 
   /// Whether isolates start one-at-a-time or all concurrently.

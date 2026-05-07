@@ -19,13 +19,13 @@ When you use a closure (anonymous function) in Dart, it can implicitly capture t
 ```dart
 class NumbersRepository {
   final StreamController<int> _controller;
-  final IsolateWorkgroup pool;
+  final IsolateWorkgroup workgroup;
 
-  NumbersRepository(this.pool) : _controller = StreamController<int>();
+  NumbersRepository(this.workgroup) : _controller = StreamController<int>();
 
   // ❌ DANGEROUS: Closure captures 'this' which includes _controller
   Future<int> calculateSum(int a, int b) {
-    return pool.dispatch(
+    return workgroup.dispatch(
       TwoParamsJob(a, b, (x, y) {
         // This closure captures the entire NumbersRepository object!
         // Including the _controller field which is NOT sendable
@@ -46,13 +46,13 @@ class NumbersRepository {
 ```dart
 class NumbersRepository {
   final StreamController<int> _controller;
-  final IsolateWorkgroup pool;
+  final IsolateWorkgroup workgroup;
 
-  NumbersRepository(this.pool) : _controller = StreamController<int>();
+  NumbersRepository(this.workgroup) : _controller = StreamController<int>();
 
   // ✅ SAFE: Static function doesn't capture 'this'
   Future<int> calculateSum(int a, int b) {
-    return pool.dispatch(
+    return workgroup.dispatch(
       TwoParamsJob(a, b, _sumHandler),
     );
   }
@@ -76,12 +76,12 @@ class NumbersRepository {
 int sumNumbers(int x, int y) => x + y;
 
 class NumbersRepository {
-  final IsolateWorkgroup pool;
+  final IsolateWorkgroup workgroup;
 
-  NumbersRepository(this.pool);
+  NumbersRepository(this.workgroup);
 
   Future<int> calculateSum(int a, int b) {
-    return pool.dispatch(
+    return workgroup.dispatch(
       TwoParamsJob(a, b, sumNumbers),
     );
   }
@@ -98,10 +98,10 @@ class NumbersRepository {
 // ❌ BAD: Passing object with non-sendable fields
 class UserRepository {
   final Database _db; // Contains native resources
-  final IsolateWorkgroup pool;
+  final IsolateWorkgroup workgroup;
 
   Future<User> fetchUser(int userId) {
-    return pool.dispatch(
+    return workgroup.dispatch(
       FetchUserJob(userId, _db), // ❌ Can't send _db to isolate!
     );
   }
@@ -110,14 +110,14 @@ class UserRepository {
 // ✅ GOOD: Extract only the sendable data you need
 class UserRepository {
   final Database _db;
-  final IsolateWorkgroup pool;
+  final IsolateWorkgroup workgroup;
 
   Future<User> fetchUser(int userId) async {
     // Extract the data locally
     final connectionString = _db.connectionString; // String is sendable
     final config = _db.config; // Assuming config is a Map
 
-    return pool.dispatch(
+    return workgroup.dispatch(
       FetchUserJob(userId, connectionString, config),
     );
   }
@@ -202,12 +202,12 @@ Solutions:
 ```dart
 class ApiClient {
   final http.Client _httpClient; // Non-sendable!
-  final IsolateWorkgroup pool;
+  final IsolateWorkgroup workgroup;
 
   Future<String> fetchData(String url) {
     // ❌ Even if you don't use _httpClient in the closure,
     // it gets captured because the closure is defined in an instance method
-    return pool.dispatch(
+    return workgroup.dispatch(
       SimpleJob(() async {
         // This captures 'this' and _httpClient
         return 'some data';
@@ -219,10 +219,10 @@ class ApiClient {
 // ✅ Solution: Use static method
 class ApiClient {
   final http.Client _httpClient;
-  final IsolateWorkgroup pool;
+  final IsolateWorkgroup workgroup;
 
   Future<String> fetchData(String url) {
-    return pool.dispatch(
+    return workgroup.dispatch(
       UrlFetchJob(url),
     );
   }
@@ -249,7 +249,7 @@ class Calculator {
 
   Future<int> calculate(int x, int y) {
     // ❌ _add is an instance method, not static
-    return pool.dispatch(
+    return workgroup.dispatch(
       TwoParamsJob(x, y, _add),
     );
   }
@@ -265,7 +265,7 @@ class Calculator {
 
   Future<int> calculate(int x, int y) {
     // Pass _offset as a parameter instead
-    return pool.dispatch(
+    return workgroup.dispatch(
       ThreeParamsJob(x, y, _offset, _addWithOffset),
     );
   }
@@ -338,10 +338,10 @@ class DataJob extends WorkgroupJob<Result> {
 
 ```dart
 // Instance method closures
-pool.dispatch(Job(() => _instanceMethod()));
+workgroup.dispatch(Job(() => _instanceMethod()));
 
 // Closures capturing 'this'
-pool.dispatch(Job((x) => x + _instanceField));
+workgroup.dispatch(Job((x) => x + _instanceField));
 
 // Jobs with non-sendable fields
 class BadJob extends WorkgroupJob<int> {

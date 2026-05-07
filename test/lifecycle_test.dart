@@ -333,11 +333,11 @@ void main() {
       },
     );
 
-    test('default labels are pooled_isolate_N', () async {
+    test('default labels are workgroup_worker_N', () async {
       final wg = IsolateWorkgroup(2);
       await wg.launch();
       final keys = wg.errorReceivePortsStreamsMap.keys.toSet();
-      expect(keys, containsAll(['pooled_isolate_0', 'pooled_isolate_1']));
+      expect(keys, containsAll(['workgroup_worker_0', 'workgroup_worker_1']));
       wg.shutdown();
     });
   });

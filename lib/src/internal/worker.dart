@@ -44,7 +44,7 @@ void processResponse(Response response, [Map<int, Completer>? requestCompleters]
 }
 
 /// Main function for the worker isolate
-void pooledIsolateBody(PooledIsolateParams params) async {
+void runWorker(WorkerLaunchParams params) async {
   final isolatePort = ReceivePort();
 
   // Split counters into ranges to avoid overlaps between isolates
