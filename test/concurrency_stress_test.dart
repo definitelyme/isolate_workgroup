@@ -42,7 +42,7 @@ void main() {
       await wg.addInstance(EchoMember());
     }
     final perIsolate = <int, int>{};
-    for (final entry in wg.pooledInstances.values) {
+    for (final entry in wg.members.values) {
       perIsolate[entry.isolateIndex] =
           (perIsolate[entry.isolateIndex] ?? 0) + 1;
     }
@@ -179,7 +179,7 @@ void main() {
               MemberProxy<dynamic>(
                 memberId: -1,
                 workerIndex: -1,
-                pool: wg,
+                workgroup: wg,
                 remoteCallback: null,
               )),
         );

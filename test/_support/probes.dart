@@ -10,13 +10,13 @@ import 'package:isolate_workgroup/isolate_workgroup.dart';
 import 'package:test/test.dart';
 
 /// Asserts that all main-side state maps the workgroup exposes are empty.
-/// Used after shutdown / drain cycles to catch leaks of jobs, instances,
+/// Used after shutdown / drain cycles to catch leaks of jobs, members,
 /// pending requests, or ports.
 void expectAllStateMapsEmpty(IsolateWorkgroup wg) {
   expect(wg.pendingCount, 0, reason: 'pendingCount should be 0');
   expect(wg.memberCount, 0, reason: 'memberCount should be 0');
   expect(wg.requestCompleters, isEmpty, reason: 'requestCompleters should be empty');
-  expect(wg.pooledInstances, isEmpty, reason: 'pooledInstances should be empty');
+  expect(wg.members, isEmpty, reason: 'members should be empty');
 }
 
 /// Asserts that the named isolate's debug name is gone from all 3 port maps,

@@ -244,7 +244,7 @@ void main() {
     test('after shutdown is silently safe (no throw)', () async {
       final proxy = await wg.addInstance(EchoMember(), isolateIndex: 0);
       wg.shutdown();
-      // shutdown clears _pooledInstances, so destroyInstance hits the
+      // shutdown clears _members, so destroyInstance hits the
       // already-destroyed early-out path and returns silently.
       wg.destroyInstance(proxy);
     });
@@ -430,7 +430,7 @@ void main() {
     });
 
     test('indexOfInstance returns -1 for unknown', () async {
-      // Build a proxy that is not in the pool.
+      // Build a proxy that is not in the workgroup.
       final p0 = await wg.addInstance(EchoMember(), isolateIndex: 0);
       wg.destroyInstance(p0);
       expect(wg.indexOfInstance(p0), -1);

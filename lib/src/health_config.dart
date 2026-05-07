@@ -6,8 +6,8 @@
 class WorkgroupHealthConfig {
   /// Whether health checking is enabled.
   ///
-  /// When enabled, the pool will check isolate health before dispatching
-  /// jobs and requests, and will detect dead isolates automatically.
+  /// When enabled, the workgroup will check worker health before dispatching
+  /// jobs and requests, and will detect dead workers automatically.
   ///
   /// Defaults to `true`.
   final bool enabled;
@@ -49,9 +49,9 @@ class WorkgroupHealthConfig {
   /// providing lower latency but risking timeouts if the isolate is dead.
   ///
   /// Applies to:
-  /// - Job scheduling via [scheduleJob()]
-  /// - Instance creation via [addInstance()]
-  /// - Instance requests via [sendRequest()]
+  /// - Job dispatch via [IsolateWorkgroup.dispatch]
+  /// - Member creation via [IsolateWorkgroup.addInstance]
+  /// - Member requests via [MemberProxy.invoke]
   ///
   /// Defaults to `false`
   final bool checkBeforeDispatching;

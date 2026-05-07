@@ -1,7 +1,7 @@
 /// A Dart library for managing a dynamic group of worker isolates.
 ///
 /// Supports one-off job dispatch, persistent members with state, health
-/// monitoring, and runtime pool resizing (add / kill individual isolates).
+/// monitoring, and runtime workgroup resizing (add / kill individual isolates).
 ///
 /// # Quick start
 ///

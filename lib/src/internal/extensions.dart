@@ -8,35 +8,35 @@ import '../workgroup_member.dart';
 import 'messages.dart';
 
 extension IsolateWorkgroupExtensions on IsolateWorkgroup {
-  /// Sends a request to an instance in the pool.
+  /// Sends a request to a member in the workgroup.
   ///
-  /// This method sends an action to a specific instance in the pool and returns
-  /// a future that completes with the result of the action.
+  /// This method sends a command to a specific member and returns a future
+  /// that completes with the result.
   ///
   /// Parameters:
-  /// - [instanceId]: The ID of the instance to send the request to
-  /// - [action]: The action to send to the instance
-  /// - [isolateIndex]: Optional index of the isolate to execute the action on.
-  ///   If specified, this overrides the isolate where the instance was created.
-  ///   If not specified or negative, the instance's original isolate is used.
+  /// - [instanceId]: The ID of the member to send the request to
+  /// - [action]: The command to send to the member
+  /// - [isolateIndex]: Optional index of the worker to execute the command on.
+  ///   If specified, this overrides the worker where the member was created.
+  ///   If not specified or negative, the member's original worker is used.
   ///
   /// Throws exceptions if:
-  /// - The instance does not exist
-  /// - The instance is not yet started
-  /// - The pool has been stopped
-  /// - The specified isolate index is invalid
+  /// - The member does not exist
+  /// - The member is not yet started
+  /// - The workgroup has been shut down
+  /// - The specified worker index is invalid
   Future<R> sendRequest<R>(int instanceId, WorkerCommand action, [int? isolateIndex]) async {
     isolateIndex ??= -1;
 
     if (state == WorkgroupState.disposed) {
-      throw WorkgroupInactiveException('Isolate pool has been stopped, cannot send request');
+      throw WorkgroupInactiveException('Workgroup has been shut down, cannot send request');
     }
 
-    if (!pooledInstances.containsKey(instanceId)) {
-      throw WorkgroupMemberNotFoundException('Cannot send request to non-existing instance, instanceId $instanceId');
+    if (!members.containsKey(instanceId)) {
+      throw WorkgroupMemberNotFoundException('Cannot send request to non-existing member, memberId $instanceId');
     }
 
-    final instance = pooledInstances[instanceId]!;
+    final instance = members[instanceId]!;
 
     if (instance.state == WorkgroupMemberStatus.starting) {
       throw WorkgroupNotReadyException('Cannot send request to instance in Starting state, instanceId $instanceId');

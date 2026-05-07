@@ -32,7 +32,7 @@ enum IsolateErrorType {
   /// Errors related to job execution.
   job,
 
-  /// Errors related to pooled member operations.
+  /// Errors related to workgroup member operations.
   instance,
 
   /// Errors related to inter-isolate communication.

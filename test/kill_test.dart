@@ -23,7 +23,7 @@ void main() {
     late IsolateWorkgroup wg;
 
     setUp(() {
-      // Each test creates its own pool; tearDown shuts it down if alive.
+      // Each test creates its own workgroup; tearDown shuts it down if alive.
     });
 
     tearDown(() {
@@ -104,10 +104,10 @@ void main() {
 
       wg.kill(1);
       expect(wg.memberCount, 2);
-      expect(wg.pooledInstances.containsKey(p0.memberId), isTrue);
-      expect(wg.pooledInstances.containsKey(p1a.memberId), isFalse);
-      expect(wg.pooledInstances.containsKey(p1b.memberId), isFalse);
-      expect(wg.pooledInstances.containsKey(p2.memberId), isTrue);
+      expect(wg.members.containsKey(p0.memberId), isTrue);
+      expect(wg.members.containsKey(p1a.memberId), isFalse);
+      expect(wg.members.containsKey(p1b.memberId), isFalse);
+      expect(wg.members.containsKey(p2.memberId), isTrue);
     });
 
     test('other isolates continue to work normally', () async {
@@ -180,7 +180,7 @@ void main() {
       },
     );
 
-    test('killing on idle pool throws WorkgroupException', () async {
+    test('killing on idle workgroup throws WorkgroupException', () async {
       wg = IsolateWorkgroup(3);
       // Note: launch not called.
       expect(
@@ -190,7 +190,7 @@ void main() {
     });
 
     test(
-      'killing on disposed pool throws WorkgroupInactiveException',
+      'killing on disposed workgroup throws WorkgroupInactiveException',
       () async {
         wg = IsolateWorkgroup(3);
         await wg.launch();
@@ -215,9 +215,9 @@ void main() {
       wg.kill(1);
       wg.kill(3);
       expect(wg.memberCount, 3);
-      expect(wg.pooledInstances.containsKey(p0.memberId), isTrue);
-      expect(wg.pooledInstances.containsKey(p2.memberId), isTrue);
-      expect(wg.pooledInstances.containsKey(p4.memberId), isTrue);
+      expect(wg.members.containsKey(p0.memberId), isTrue);
+      expect(wg.members.containsKey(p2.memberId), isTrue);
+      expect(wg.members.containsKey(p4.memberId), isTrue);
     });
 
     test('cleans _isolateHealth, _isolateBusyWithJob, and all 3 port maps',
@@ -300,8 +300,8 @@ void main() {
         // Other isolates are unaffected.
         final p0 = await wg.addInstance(EchoMember(), isolateIndex: 0);
         final p2 = await wg.addInstance(EchoMember(), isolateIndex: 2);
-        expect(wg.pooledInstances.containsKey(p0.memberId), isTrue);
-        expect(wg.pooledInstances.containsKey(p2.memberId), isTrue);
+        expect(wg.members.containsKey(p0.memberId), isTrue);
+        expect(wg.members.containsKey(p2.memberId), isTrue);
       },
     );
 
