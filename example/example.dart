@@ -2,33 +2,33 @@ import 'dart:isolate';
 import 'dart:math';
 import 'dart:typed_data';
 
-import 'package:isolate_pool_2/isolate_pool_2.dart';
+import 'package:isolate_workgroup/isolate_workgroup.dart';
 
 void main(List<String> arguments) async {
   // Start and await for the pool to complete launching
-  var pool = IsolatePool(4);
-  await pool.start();
+  var pool = IsolateWorkgroup(4);
+  await pool.launch();
 
-  // SAMPLE 1, Poold Job
+  // SAMPLE 1, Workgroup Job
   await multiplierJobs(pool);
 
-  // SAMPLE 2, Pooled Instance
-  await randomViaPooledInstances(pool);
+  // SAMPLE 2, Workgroup Member
+  await randomViaWorkgroupMembers(pool);
 
   // Stop isolate and let the process finish
-  pool.stop();
+  pool.shutdown();
 }
 
 ////////////////////////////
-// SAMPLE 1, PooledJob<T> //
+// SAMPLE 1, WorkgroupJob<T> //
 ////////////////////////////
 
-Future<void> multiplierJobs(IsolatePool pool) async {
+Future<void> multiplierJobs(IsolateWorkgroup pool) async {
   print('\n\nEXAMPLE1\n');
   var futures = <Future<int>>[];
-  // Schedule mutliple jobs on the isolate pool and store all futures returned
+  // Schedule mutliple jobs on the isolate workgroup and store all futures returned
   for (var i = 0; i < 15; i++) {
-    futures.add(pool.scheduleJob<int>(DoubleNumbersJob(101 + i)));
+    futures.add(pool.dispatch<int>(DoubleNumbersJob(101 + i)));
   }
 
   // Wait for all futures to complete and collect the results
@@ -36,30 +36,30 @@ Future<void> multiplierJobs(IsolatePool pool) async {
   print('Multiplication result: $sum');
 }
 
-// `DoubleNumbersJob` class inherits `PooledJob` and implements an operation to be executed in the pool.
-// In this case we do multiplication in `job()` method that is overriden.
-// `T` in `PooledJob<T>` defines the result type returned by `job()`, it is `int` here
-class DoubleNumbersJob extends PooledJob<int> {
+// `DoubleNumbersJob` class inherits `WorkgroupJob` and implements an operation to be executed in the workgroup.
+// In this case we do multiplication in `execute()` method that is overriden.
+// `T` in `WorkgroupJob<T>` defines the result type returned by `execute()`, it is `int` here
+class DoubleNumbersJob extends WorkgroupJob<int> {
   final int number;
 
   DoubleNumbersJob(this.number);
 
   @override
-  Future<int> job() async {
+  Future<int> execute() async {
     print('DoubleNumbersJob: $number');
     return number * 2;
   }
 }
 
 //////////////////////////////
-// SAMPLE 2, PooledInstance //
+// SAMPLE 2, WorkgroupMember //
 //////////////////////////////
 
-Future<void> randomViaPooledInstances(IsolatePool pool) async {
+Future<void> randomViaWorkgroupMembers(IsolateWorkgroup pool) async {
   print('\n\nEXAMPLE2\n');
-  var proxies = List<PooledInstanceProxy>.empty(growable: true);
+  var proxies = List<MemberProxy>.empty(growable: true);
 
-  // Create pooled instances in isolates inside pool,
+  // Create workgroup members in isolates inside pool,
   // collect proxy objects to comminucate with them from within main isolate
   for (var i = 0; i < 4; i++) {
     proxies.add(await pool.addInstance(RandomBytesGenerator()));
@@ -67,7 +67,7 @@ Future<void> randomViaPooledInstances(IsolatePool pool) async {
 
   // Call remote methods via proxies
   var futures = List<Future<RandomBytes>>.generate(proxies.length,
-      (i) => proxies[i].callRemoteMethod(GetNBytesAction(1024 * 1024)));
+      (i) => proxies[i].invoke(GetNBytesAction(1024 * 1024)));
 
   // Await for remote method results
   var results = await Future.wait(futures);
@@ -80,7 +80,7 @@ Future<void> randomViaPooledInstances(IsolatePool pool) async {
   var i = 0;
   futures = results
       .map((r) =>
-          proxies[i++].callRemoteMethod<RandomBytes>(ComputeStats(r.bytes)))
+          proxies[i++].invoke<RandomBytes>(ComputeStats(r.bytes)))
       .toList();
 
   results = await Future.wait(futures);
@@ -89,13 +89,13 @@ Future<void> randomViaPooledInstances(IsolatePool pool) async {
   }
 }
 
-// Pooled instance implementation that will run all operations outside main isolate.
+// WorkgroupMember implementation that will run all operations outside main isolate.
 // Generating random numbers (which can be slow) and computing basic stats.
-class RandomBytesGenerator extends PooledInstance {
+class RandomBytesGenerator extends WorkgroupMember {
   late Random _rand;
 
   @override
-  Future init() async {
+  Future setup() async {
     _rand = Random();
   }
 
@@ -133,12 +133,12 @@ class RandomBytesGenerator extends PooledInstance {
     return (min, max, avg);
   }
 
-  // This method is called by isolate pool whenever there's
-  // a call to `callRemoteMethod()` on a proxy object in main isolate
-  // `Action` object is used to determine the operation requested (type of the object)
-  // and transfer a payload - the Action obhject is passed in from the main isolate as-is
+  // This method is called by the workgroup whenever there's
+  // a call to `invoke()` on a proxy object in main isolate
+  // `WorkerCommand` object is used to determine the operation requested (type of the object)
+  // and transfer a payload - the WorkerCommand object is passed in from the main isolate as-is
   @override
-  Future<dynamic> receiveRemoteCall(Action action) async {
+  Future<dynamic> handle(WorkerCommand action) async {
     // Pre Dart 3.0
     // switch (action.runtimeType) {
     //   case GetNBytesAction:
@@ -162,14 +162,14 @@ class RandomBytesGenerator extends PooledInstance {
   }
 }
 
-// Action that requests N random bytes
-class GetNBytesAction extends Action {
+// WorkerCommand that requests N random bytes
+class GetNBytesAction extends WorkerCommand {
   final int numberOfBytes;
   GetNBytesAction(this.numberOfBytes);
 }
 
-// An action that sends a list of bytes and receives statistics for that numbers
-class ComputeStats extends Action {
+// A WorkerCommand that sends a list of bytes and receives statistics for that numbers
+class ComputeStats extends WorkerCommand {
   // Using TransferableTypedData, a more verbose alternative to Uint8List (yet possibly faster)
   final TransferableTypedData bytes;
   ComputeStats(this.bytes);

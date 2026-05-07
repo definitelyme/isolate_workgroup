@@ -1,8 +1,8 @@
-# Best Practices for Using isolate_pool_2
+# Best Practices for Using isolate_workgroup
 
 ## Table of Contents
 - [Avoiding Closure Capture Issues](#avoiding-closure-capture-issues)
-- [Creating Safe PooledJob Classes](#creating-safe-pooledjob-classes)
+- [Creating Safe WorkgroupJob Classes](#creating-safe-workgroupjob-classes)
 - [Using Validation Effectively](#using-validation-effectively)
 - [Common Pitfalls](#common-pitfalls)
 
@@ -19,13 +19,13 @@ When you use a closure (anonymous function) in Dart, it can implicitly capture t
 ```dart
 class NumbersRepository {
   final StreamController<int> _controller;
-  final IsolatePool pool;
+  final IsolateWorkgroup pool;
 
   NumbersRepository(this.pool) : _controller = StreamController<int>();
 
   // ❌ DANGEROUS: Closure captures 'this' which includes _controller
   Future<int> calculateSum(int a, int b) {
-    return pool.scheduleJob(
+    return pool.dispatch(
       TwoParamsJob(a, b, (x, y) {
         // This closure captures the entire NumbersRepository object!
         // Including the _controller field which is NOT sendable
@@ -39,20 +39,20 @@ class NumbersRepository {
 **What happens:**
 - The closure `(x, y) => x + y` captures `this` (the `NumbersRepository` instance)
 - When sent to the isolate, it tries to send `_controller` (StreamController)
-- Validation catches this and throws `IsolatePoolException`
+- Validation catches this and throws `WorkgroupException`
 
 ### ✅ GOOD: Use Static or Top-Level Functions
 
 ```dart
 class NumbersRepository {
   final StreamController<int> _controller;
-  final IsolatePool pool;
+  final IsolateWorkgroup pool;
 
   NumbersRepository(this.pool) : _controller = StreamController<int>();
 
   // ✅ SAFE: Static function doesn't capture 'this'
   Future<int> calculateSum(int a, int b) {
-    return pool.scheduleJob(
+    return pool.dispatch(
       TwoParamsJob(a, b, _sumHandler),
     );
   }
@@ -76,12 +76,12 @@ class NumbersRepository {
 int sumNumbers(int x, int y) => x + y;
 
 class NumbersRepository {
-  final IsolatePool pool;
+  final IsolateWorkgroup pool;
 
   NumbersRepository(this.pool);
 
   Future<int> calculateSum(int a, int b) {
-    return pool.scheduleJob(
+    return pool.dispatch(
       TwoParamsJob(a, b, sumNumbers),
     );
   }
@@ -90,7 +90,7 @@ class NumbersRepository {
 
 ---
 
-## Creating Safe PooledJob Classes
+## Creating Safe WorkgroupJob Classes
 
 ### Pattern 1: Extract Data Before Creating Job
 
@@ -98,10 +98,10 @@ class NumbersRepository {
 // ❌ BAD: Passing object with non-sendable fields
 class UserRepository {
   final Database _db; // Contains native resources
-  final IsolatePool pool;
+  final IsolateWorkgroup pool;
 
   Future<User> fetchUser(int userId) {
-    return pool.scheduleJob(
+    return pool.dispatch(
       FetchUserJob(userId, _db), // ❌ Can't send _db to isolate!
     );
   }
@@ -110,14 +110,14 @@ class UserRepository {
 // ✅ GOOD: Extract only the sendable data you need
 class UserRepository {
   final Database _db;
-  final IsolatePool pool;
+  final IsolateWorkgroup pool;
 
   Future<User> fetchUser(int userId) async {
     // Extract the data locally
     final connectionString = _db.connectionString; // String is sendable
     final config = _db.config; // Assuming config is a Map
 
-    return pool.scheduleJob(
+    return pool.dispatch(
       FetchUserJob(userId, connectionString, config),
     );
   }
@@ -128,14 +128,14 @@ class UserRepository {
 
 ```dart
 // ✅ GOOD: Job with only sendable fields
-class CalculationJob extends PooledJob<double> {
+class CalculationJob extends WorkgroupJob<double> {
   final List<double> numbers;
   final String operation;
 
   CalculationJob(this.numbers, this.operation);
 
   @override
-  Future<double> job() async {
+  Future<double> execute() async {
     switch (operation) {
       case 'sum':
         return numbers.reduce((a, b) => a + b);
@@ -162,29 +162,29 @@ class CalculationJob extends PooledJob<double> {
 When you see a validation error, it means your job contains non-sendable objects:
 
 ```dart
-IsolatePoolException: Job of type TwoParamsJob contains non-sendable objects
+WorkgroupException: Job of type TwoParamsJob contains non-sendable objects
 and cannot be sent to an isolate.
 
 Common causes:
 1. Using a closure that captures non-sendable objects (StreamController, Completer, etc.)
-2. Including non-sendable fields in your PooledJob subclass
+2. Including non-sendable fields in your WorkgroupJob subclass
 3. Capturing "this" context that contains non-sendable state
 
 Solutions:
 - Use static or top-level functions instead of closures
-- Ensure your PooledJob only contains sendable fields
+- Ensure your WorkgroupJob only contains sendable fields
 - Extract the necessary data before creating the job
 ```
 
 ### Debug Process
 
-1. **Check for closures** in your PooledJob
+1. **Check for closures** in your WorkgroupJob
    - Are you using `(params) => ...`?
    - Is the closure defined inside an instance method?
    - Does it reference any instance variables?
 
 2. **Check job fields**
-   - What fields does your PooledJob subclass have?
+   - What fields does your WorkgroupJob subclass have?
    - Are they all primitives, Strings, Lists, or Maps?
    - Do any contain Completers, StreamControllers, etc.?
 
@@ -202,12 +202,12 @@ Solutions:
 ```dart
 class ApiClient {
   final http.Client _httpClient; // Non-sendable!
-  final IsolatePool pool;
+  final IsolateWorkgroup pool;
 
   Future<String> fetchData(String url) {
     // ❌ Even if you don't use _httpClient in the closure,
     // it gets captured because the closure is defined in an instance method
-    return pool.scheduleJob(
+    return pool.dispatch(
       SimpleJob(() async {
         // This captures 'this' and _httpClient
         return 'some data';
@@ -219,21 +219,21 @@ class ApiClient {
 // ✅ Solution: Use static method
 class ApiClient {
   final http.Client _httpClient;
-  final IsolatePool pool;
+  final IsolateWorkgroup pool;
 
   Future<String> fetchData(String url) {
-    return pool.scheduleJob(
+    return pool.dispatch(
       UrlFetchJob(url),
     );
   }
 }
 
-class UrlFetchJob extends PooledJob<String> {
+class UrlFetchJob extends WorkgroupJob<String> {
   final String url;
   UrlFetchJob(this.url);
 
   @override
-  Future<String> job() async {
+  Future<String> execute() async {
     // Create a new client in the isolate
     // Or use a sendable HTTP library
     return 'fetched data';
@@ -249,7 +249,7 @@ class Calculator {
 
   Future<int> calculate(int x, int y) {
     // ❌ _add is an instance method, not static
-    return pool.scheduleJob(
+    return pool.dispatch(
       TwoParamsJob(x, y, _add),
     );
   }
@@ -265,7 +265,7 @@ class Calculator {
 
   Future<int> calculate(int x, int y) {
     // Pass _offset as a parameter instead
-    return pool.scheduleJob(
+    return pool.dispatch(
       ThreeParamsJob(x, y, _offset, _addWithOffset),
     );
   }
@@ -287,25 +287,25 @@ class Config {
   Config(this.apiKey) : _events = StreamController();
 }
 
-class ApiJob extends PooledJob<String> {
+class ApiJob extends WorkgroupJob<String> {
   final Config config; // ❌ Config contains _events!
 
   ApiJob(this.config);
 
   @override
-  Future<String> job() async {
+  Future<String> execute() async {
     return 'API call with ${config.apiKey}';
   }
 }
 
 // ✅ GOOD: Only pass the sendable data
-class ApiJob extends PooledJob<String> {
+class ApiJob extends WorkgroupJob<String> {
   final String apiKey; // ✅ Only the String
 
   ApiJob(this.apiKey);
 
   @override
-  Future<String> job() async {
+  Future<String> execute() async {
     return 'API call with $apiKey';
   }
 }
@@ -325,7 +325,7 @@ static int add(int a, int b) => a + b;
 int multiply(int a, int b) => a * b;
 
 // Jobs with only sendable fields
-class DataJob extends PooledJob<Result> {
+class DataJob extends WorkgroupJob<Result> {
   final String id;
   final Map<String, dynamic> data;
   final List<int> indices;
@@ -338,13 +338,13 @@ class DataJob extends PooledJob<Result> {
 
 ```dart
 // Instance method closures
-pool.scheduleJob(Job(() => _instanceMethod()));
+pool.dispatch(Job(() => _instanceMethod()));
 
 // Closures capturing 'this'
-pool.scheduleJob(Job((x) => x + _instanceField));
+pool.dispatch(Job((x) => x + _instanceField));
 
 // Jobs with non-sendable fields
-class BadJob extends PooledJob<int> {
+class BadJob extends WorkgroupJob<int> {
   final StreamController controller; // ❌
   final Completer completer;         // ❌
   final Socket socket;               // ❌
@@ -358,7 +358,7 @@ class BadJob extends PooledJob<int> {
 Use the validation tests to verify your jobs are safe:
 
 ```dart
-import 'package:isolate_pool_2/isolate_pool_2.dart';
+import 'package:isolate_workgroup/isolate_workgroup.dart';
 
 void main() {
   final job = MyCustomJob(/* params */);
@@ -378,7 +378,7 @@ void main() {
 
 1. **Prefer static or top-level functions** over closures
 2. **Extract sendable data** before creating jobs
-3. **Only use sendable types** in PooledJob fields
+3. **Only use sendable types** in WorkgroupJob fields
 4. **Trust the validation errors** - they're there to help you
 5. **Test your jobs** before deploying to production
 
