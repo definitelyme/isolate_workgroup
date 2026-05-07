@@ -1,9 +1,9 @@
-/// Configuration for IsolatePool health checking.
+/// Configuration for IsolateWorkgroup health checking.
 ///
 /// Health checking uses [Isolate.ping()] to verify that isolates are
 /// responsive and can still receive messages. This helps detect dead or
 /// hung isolates before attempting to send work to them.
-class IsolateHealthConfig {
+class WorkgroupHealthConfig {
   /// Whether health checking is enabled.
   ///
   /// When enabled, the pool will check isolate health before dispatching
@@ -57,7 +57,7 @@ class IsolateHealthConfig {
   final bool checkBeforeDispatching;
 
   /// Creates a health configuration with the given settings.
-  const IsolateHealthConfig({
+  const WorkgroupHealthConfig({
     this.enabled = true,
     this.pingTimeout = const Duration(seconds: 2),
     this.stalenessThreshold = const Duration(seconds: 30),
@@ -66,7 +66,7 @@ class IsolateHealthConfig {
   });
 
   /// Creates a configuration with health checking disabled.
-  const IsolateHealthConfig.disabled()
+  const WorkgroupHealthConfig.disabled()
       : enabled = false,
         pingTimeout = Duration.zero,
         stalenessThreshold = Duration.zero,
@@ -80,7 +80,7 @@ class IsolateHealthConfig {
   /// is more important than avoiding false positives.
   ///
   /// Includes pre-dispatch health checking for maximum protection.
-  const IsolateHealthConfig.aggressive()
+  const WorkgroupHealthConfig.aggressive()
       : enabled = true,
         pingTimeout = const Duration(milliseconds: 500),
         stalenessThreshold = const Duration(seconds: 10),
@@ -93,7 +93,7 @@ class IsolateHealthConfig {
   /// false positives when isolates may be under heavy load.
   ///
   /// Skips pre-dispatch health checking to prioritize low latency.
-  const IsolateHealthConfig.relaxed()
+  const WorkgroupHealthConfig.relaxed()
       : enabled = true,
         pingTimeout = const Duration(seconds: 5),
         stalenessThreshold = const Duration(minutes: 2),
@@ -102,7 +102,7 @@ class IsolateHealthConfig {
 
   @override
   String toString() {
-    final msg = StringBuffer('IsolateHealthConfig(')
+    final msg = StringBuffer('WorkgroupHealthConfig(')
       ..writeln('enabled: $enabled, ')
       ..writeln('pingTimeout: $pingTimeout, ')
       ..writeln('stalenessThreshold: $stalenessThreshold, ')
