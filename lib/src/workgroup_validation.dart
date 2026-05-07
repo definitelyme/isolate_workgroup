@@ -74,7 +74,7 @@ extension WorkgroupMemberValidation on WorkgroupMember {
           '- SendPort\n'
           '- Capability\n'
           '- Type\n\n'
-          'Never sendable:\n'
+          'NEVER sendable:\n'
           '- Objects with native resources (Socket, etc.)\n'
           '- ReceivePort, RawReceivePort\n'
           '- DynamicLibrary\n'

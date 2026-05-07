@@ -119,7 +119,7 @@ void pooledIsolateBody(PooledIsolateParams params) async {
         final result = await message.job.execute();
         params.sendPort.send(WorkgroupJobResult(result, message.jobIndex, message.isolateIndex, null, null));
       } catch (e, st) {
-        final error = WorkgroupIsolateError(e, params.isolateIndex, 'Error executing job: ${e.toString()}', st);
+        final error = WorkgroupIsolateError(e, params.isolateIndex, 'Error during job execution: ${e.toString()}', st);
         params.sendPort.send(WorkgroupJobResult(null, message.jobIndex, message.isolateIndex, error, st));
         params.errorSendPort?.send(error);
       }
