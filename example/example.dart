@@ -1,186 +1,148 @@
-import 'dart:isolate';
-import 'dart:math';
-import 'dart:typed_data';
+// Two minimal samples for isolate_workgroup.
+//
+//   Sample 1 — dispatch(): parallel one-off jobs.
+//              Splits a big numeric range into chunks, computes a partial
+//              sum in each worker, and reduces the partials in the main
+//              isolate. Demonstrates fire-and-forget jobs whose result
+//              you await.
+//
+//   Sample 2 — addInstance() + invoke(): stateful members.
+//              Spawns a `Counter` member in each worker and drives it
+//              with a small WorkerCommand vocabulary. Demonstrates
+//              persistent state living inside a worker across many calls.
 
 import 'package:isolate_workgroup/isolate_workgroup.dart';
 
 void main(List<String> arguments) async {
-  // Start and await for the workgroup to finish launching
-  var workgroup = IsolateWorkgroup(4);
+  final workgroup = IsolateWorkgroup(4);
   await workgroup.launch();
 
-  // SAMPLE 1, Workgroup Job
-  await multiplierJobs(workgroup);
-
-  // SAMPLE 2, Workgroup Member
-  await randomViaWorkgroupMembers(workgroup);
-
-  // Shut the workgroup down and let the process finish
-  workgroup.shutdown();
-}
-
-////////////////////////////
-// SAMPLE 1, WorkgroupJob<T> //
-////////////////////////////
-
-Future<void> multiplierJobs(IsolateWorkgroup workgroup) async {
-  print('\n\nEXAMPLE1\n');
-  var futures = <Future<int>>[];
-  // Dispatch multiple jobs to the workgroup and store all returned futures
-  for (var i = 0; i < 15; i++) {
-    futures.add(workgroup.dispatch<int>(DoubleNumbersJob(101 + i)));
+  try {
+    await sample1ParallelReduce(workgroup);
+    await sample2StatefulCounters(workgroup);
+  } finally {
+    workgroup.shutdown();
   }
-
-  // Wait for all futures to complete and collect the results
-  var sum = (await Future.wait<int>(futures)).fold(0, (p, c) => p + c);
-  print('Multiplication result: $sum');
 }
 
-// `DoubleNumbersJob` class inherits `WorkgroupJob` and implements an operation to be executed in the workgroup.
-// In this case we do multiplication in `execute()` method that is overriden.
-// `T` in `WorkgroupJob<T>` defines the result type returned by `execute()`, it is `int` here
-class DoubleNumbersJob extends WorkgroupJob<int> {
-  final int number;
+// ─── Sample 1: parallel reduce via dispatch() ────────────────────────────────
 
-  DoubleNumbersJob(this.number);
+Future<void> sample1ParallelReduce(IsolateWorkgroup workgroup) async {
+  print('\n=== Sample 1: parallel reduce ===');
+
+  // Sum 1..N split across 4 chunks, reduced in main.
+  const total = 1000000;
+  const chunks = 4;
+  const chunkSize = total ~/ chunks;
+
+  final futures = <Future<ChunkStats>>[
+    for (var i = 0; i < chunks; i++)
+      workgroup.dispatch(
+        SumChunkJob(start: i * chunkSize + 1, end: (i + 1) * chunkSize),
+      ),
+  ];
+
+  final partials = await Future.wait(futures);
+  final sum = partials.fold<int>(0, (acc, p) => acc + p.sum);
+  final count = partials.fold<int>(0, (acc, p) => acc + p.count);
+  print('Sum 1..$total = $sum  (count=$count, mean=${sum / count})');
+}
+
+/// A small sendable record returned from a chunk.
+class ChunkStats {
+  final int sum;
+  final int count;
+  const ChunkStats(this.sum, this.count);
+}
+
+/// Pure-data job: only sendable fields, executes in a worker.
+class SumChunkJob extends WorkgroupJob<ChunkStats> {
+  final int start;
+  final int end;
+  const SumChunkJob({required this.start, required this.end});
 
   @override
-  Future<int> execute() async {
-    print('DoubleNumbersJob: $number');
-    return number * 2;
-  }
-}
-
-//////////////////////////////
-// SAMPLE 2, WorkgroupMember //
-//////////////////////////////
-
-Future<void> randomViaWorkgroupMembers(IsolateWorkgroup workgroup) async {
-  print('\n\nEXAMPLE2\n');
-  var proxies = List<MemberProxy>.empty(growable: true);
-
-  // Create workgroup members inside the workers, collecting proxy objects to
-  // communicate with them from the main isolate
-  for (var i = 0; i < 4; i++) {
-    proxies.add(await workgroup.addInstance(RandomBytesGenerator()));
-  }
-
-  // Call remote methods via proxies
-  var futures = List<Future<RandomBytes>>.generate(proxies.length,
-      (i) => proxies[i].invoke(GetNBytesAction(1024 * 1024)));
-
-  // Await for remote method results
-  var results = await Future.wait(futures);
-  for (var r in results) {
-    print('Min: ${r.min}, Max: ${r.max}, Avg: ${r.avg.toStringAsFixed(1)},');
-  }
-
-  // Repeating stats computation by trnasferig to isolaes bytes
-  print('Recalculating stats');
-  var i = 0;
-  futures = results
-      .map((r) =>
-          proxies[i++].invoke<RandomBytes>(ComputeStats(r.bytes)))
-      .toList();
-
-  results = await Future.wait(futures);
-  for (var r in results) {
-    print('Min: ${r.min}, Max: ${r.max}, Avg: ${r.avg.toStringAsFixed(1)},');
-  }
-}
-
-// WorkgroupMember implementation that will run all operations outside main isolate.
-// Generating random numbers (which can be slow) and computing basic stats.
-class RandomBytesGenerator extends WorkgroupMember {
-  late Random _rand;
-
-  @override
-  Future setup() async {
-    _rand = Random();
-  }
-
-  // Internal imnplementation, generating random bytes
-  RandomBytes getBytes(int n) {
-    var items = [Uint8List(n)];
-    for (var i = 0; i < n; i++) {
-      items[0][i] = _rand.nextInt(256);
+  Future<ChunkStats> execute() async {
+    var s = 0;
+    for (var i = start; i <= end; i++) {
+      s += i;
     }
+    return ChunkStats(s, end - start + 1);
+  }
+}
 
-    var (min, max, avg) = getStats(items[0]);
+// ─── Sample 2: stateful Counter members via addInstance() ────────────────────
 
-    var t = TransferableTypedData.fromList(items);
-    return RandomBytes(t, min, max, avg);
+Future<void> sample2StatefulCounters(IsolateWorkgroup workgroup) async {
+  print('\n=== Sample 2: stateful Counters ===');
+
+  // One Counter per worker. Each holds independent state in its isolate.
+  final counters = <MemberProxy>[
+    for (var i = 0; i < 4; i++)
+      await workgroup.addInstance(Counter(), isolateIndex: i),
+  ];
+
+  // Seed each counter with a different starting amount.
+  for (var i = 0; i < counters.length; i++) {
+    await counters[i].invoke(IncrementBy((i + 1) * 10));
   }
 
-  // And calculating stats
-  (int min, int max, double avg) getStats(Uint8List items) {
-    var min = 255;
-    var max = 0;
-    var avg = 0.0;
-
-    for (var i = 0; i < items.length; i++) {
-      if (items[i] < min) {
-        min = items[i];
-      }
-      if (items[i] > max) {
-        max = items[i];
-      }
-      avg += items[i];
-    }
-
-    avg /= items.length;
-
-    return (min, max, avg);
+  for (var i = 0; i < counters.length; i++) {
+    final value = await counters[i].invoke<int>(GetValue());
+    print('Worker $i counter starts at $value');
   }
 
-  // This method is called by the workgroup whenever there's
-  // a call to `invoke()` on a proxy object in main isolate
-  // `WorkerCommand` object is used to determine the operation requested (type of the object)
-  // and transfer a payload - the WorkerCommand object is passed in from the main isolate as-is
+  // Drive counter 0 through 100 increments to show state persists across calls.
+  for (var i = 0; i < 100; i++) {
+    await counters[0].invoke(IncrementBy(1));
+  }
+  final finalValue = await counters[0].invoke<int>(GetValue());
+  print('Worker 0 after +100 increments: $finalValue');
+
+  // Reset + verify.
+  await counters[0].invoke(Reset());
+  print('Worker 0 after reset: ${await counters[0].invoke<int>(GetValue())}');
+
+  // Always destroy members you added.
+  for (final c in counters) {
+    workgroup.destroyInstance(c);
+  }
+}
+
+// Commands the Counter understands. WorkerCommand fields must be sendable.
+class IncrementBy extends WorkerCommand {
+  final int amount;
+  IncrementBy(this.amount);
+}
+
+class GetValue extends WorkerCommand {}
+
+class Reset extends WorkerCommand {}
+
+/// Persistent state that lives inside a worker isolate. The `Counter`
+/// instance is sent to the worker once on addInstance(); subsequent
+/// invoke() calls run handle() inside the worker.
+class Counter extends WorkgroupMember {
+  int _value = 0;
+
   @override
-  Future<dynamic> handle(WorkerCommand action) async {
-    // Pre Dart 3.0
-    // switch (action.runtimeType) {
-    //   case GetNBytesAction:
-    //     return getBytes((action as GetNBytesAction).numberOfBytes);
-    //   case ComputeStats:
-    //     var (min, max, avg) = getStats(
-    //         (action as ComputeStats).bytes.materialize().asUint8List());
+  Future<void> setup() async {
+    // Initialize resources here if needed.
+  }
 
-    // Using object patterns introduced in Dart 3.0
-    switch (action) {
-      case GetNBytesAction():
-        return getBytes(action.numberOfBytes);
-      case ComputeStats():
-        var (min, max, avg) =
-            getStats(action.bytes.materialize().asUint8List());
-
-        return RandomBytes(TransferableTypedData.fromList([]), min, max, avg);
+  @override
+  Future<dynamic> handle(WorkerCommand command) async {
+    switch (command) {
+      case IncrementBy():
+        _value += command.amount;
+        return null;
+      case GetValue():
+        return _value;
+      case Reset():
+        _value = 0;
+        return null;
       default:
-        throw 'Unknown action ${action.runtimeType}';
+        throw ArgumentError('Unknown command: ${command.runtimeType}');
     }
   }
-}
-
-// WorkerCommand that requests N random bytes
-class GetNBytesAction extends WorkerCommand {
-  final int numberOfBytes;
-  GetNBytesAction(this.numberOfBytes);
-}
-
-// A WorkerCommand that sends a list of bytes and receives statistics for that numbers
-class ComputeStats extends WorkerCommand {
-  // Using TransferableTypedData, a more verbose alternative to Uint8List (yet possibly faster)
-  final TransferableTypedData bytes;
-  ComputeStats(this.bytes);
-}
-
-// Payload that is used as return value for GetNBytes and
-class RandomBytes {
-  final TransferableTypedData bytes;
-  final int min;
-  final int max;
-  final double avg;
-
-  RandomBytes(this.bytes, this.min, this.max, this.avg);
 }
