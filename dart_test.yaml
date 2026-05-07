@@ -1,0 +1,10 @@
+# Default `dart test` skips slow and perf tests via per-tag skip directives.
+# To run them: `dart test --tags slow --run-skipped`
+#         or: `dart test --tags perf --run-skipped`
+tags:
+  slow:
+    description: ">10 s per test; excluded from default run"
+    skip: "tag:slow — run with `dart test --tags slow --run-skipped`"
+  perf:
+    description: "Informational benchmarks; excluded from default run"
+    skip: "tag:perf — run with `dart test --tags perf --run-skipped`"
