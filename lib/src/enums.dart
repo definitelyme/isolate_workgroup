@@ -1,48 +1,43 @@
-/// Defines the initialization behavior of isolates in the pool
+/// Defines the initialization behavior of isolates in the workgroup.
 enum InitializationPolicy {
-  /// Initialization is done sequentially, one isolate at a time.
-  /// This reduces the risk of collisions or race conditions during initialization.
+  /// Isolates start one at a time to avoid resource contention.
   sequential,
 
-  /// All isolates are initialized concurrently, which is faster but might
-  /// lead to resource contention.
+  /// All isolates start in parallel (faster but may contend).
   concurrent;
 }
 
-/// Represents the current state of an [IsolatePool].
-enum IsolatePoolState {
-  /// Pool has been created but not yet started.
-  /// Call [IsolatePool.start] to start the pool.
-  notStarted,
+/// Represents the current state of an [IsolateWorkgroup].
+enum WorkgroupState {
+  /// Workgroup created but not yet launched. Call [IsolateWorkgroup.launch].
+  idle,
 
-  /// Pool is running and ready to accept jobs.
-  started,
+  /// Workgroup is running and ready to accept jobs and members.
+  active,
 
-  /// Pool has been stopped and can't be restarted.
-  /// Create a new pool instance instead.
-  stopped
+  /// Workgroup has been shut down. Create a new instance to restart.
+  disposed
 }
 
-/// Categorization of different error types that can occur in isolates.
+/// Categorization of error types that can occur in worker isolates.
 ///
-/// Used with [IsolatePool.setErrorHandler] to register handlers for
-/// specific error categories.
+/// Used with [IsolateWorkgroup.setErrorHandler] to register targeted handlers.
 enum IsolateErrorType {
-  /// All error types, used as a catch-all handler.
+  /// Catch-all handler for all error types.
   all,
 
-  /// Errors that occur during isolate initialization.
+  /// Errors during isolate initialization.
   initialization,
 
   /// Errors related to job execution.
   job,
 
-  /// Errors related to pooled instance operations.
+  /// Errors related to pooled member operations.
   instance,
 
-  /// Errors related to communication between isolates.
+  /// Errors related to inter-isolate communication.
   communication,
 
-  /// Errors that don't fit into any other category.
+  /// Errors that don't fit any other category.
   unknown
 }
