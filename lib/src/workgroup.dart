@@ -469,7 +469,12 @@ class IsolateWorkgroup {
     try {
       sendPort.send(instance);
     } catch (e, st) {
-      completer.completeError(e);
+      // Remove the orphan completer BEFORE rethrowing. The async caller
+      // sees the rethrown error; it never sees `completer.future` itself
+      // (the function never reaches `return completer.future`). If we
+      // also call `completer.completeError` here, that future is
+      // permanently orphaned with an unhandled error — which Dart's zone
+      // would later report as an uncaught async error.
       _creationCompleters.remove(proxy.instanceId);
       _pooledInstances.remove(proxy.instanceId);
 

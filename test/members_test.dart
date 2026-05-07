@@ -160,6 +160,34 @@ void main() {
       expect(ack, 'ack-hello');
       expect(received, ['hello']);
     });
+
+    test(
+      'addInstance failure does NOT leak an orphan creation completer '
+      '(regression — previously caused unhandled async error on shutdown)',
+      () async {
+        // Run inside a zone so any orphan-completer error is captured.
+        final uncaught = <Object>[];
+        await runZonedGuarded(() async {
+          final wg = IsolateWorkgroup(2);
+          wg.setErrorHandler(IsolateErrorType.all, (_) {});
+          await wg.launch();
+          // Kill all isolates so addInstance falls into the "no alive
+          // isolates" sync-throw branch, which previously double-errored
+          // the creation completer.
+          wg.kill(0);
+          wg.kill(1);
+          try {
+            await wg.addInstance(EchoMember());
+          } catch (_) {/* expected */}
+          wg.shutdown();
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+        }, (e, _) => uncaught.add(e));
+
+        expect(uncaught, isEmpty,
+            reason:
+                'addInstance failure must not orphan a creation completer');
+      },
+    );
   });
 
   group('destroyInstance', () {
