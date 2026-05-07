@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:isolate';
 import 'dart:math' as math;
 
-import 'package:isolate_pool_2/src/internal/utils.dart';
+import 'package:isolate_workgroup/src/internal/utils.dart';
 import 'package:meta/meta.dart';
 
 import 'enums.dart';
@@ -10,9 +10,10 @@ import 'exceptions.dart';
 import 'health_config.dart';
 import 'internal/messages.dart';
 import 'internal/worker.dart';
-import 'isolate_pool_validation.dart';
-import 'pooled_instance.dart';
-import 'pooled_job.dart';
+import 'workgroup_config.dart';
+import 'workgroup_member.dart';
+import 'workgroup_validation.dart';
+import 'workgroup_job.dart';
 
 part 'internal/health_info.dart';
 
@@ -20,63 +21,66 @@ part 'internal/health_info.dart';
 ///
 /// The isolate pool creates and starts a given number of isolates and
 /// provides facilities for:
-/// 1. Scheduling one-off jobs ([PooledJob])
-/// 2. Creating persistent instances ([PooledInstance]) in the isolates
+/// 1. Scheduling one-off jobs ([WorkgroupJob])
+/// 2. Creating persistent instances ([WorkgroupMember]) in the isolates
 ///
 /// Jobs are one-time operations that execute and return a result.
 /// Pooled instances persist in the isolates, can maintain state, and
 /// respond to multiple calls.
-class IsolatePool {
-  /// Creates a new [IsolatePool] with the specified number of isolates.
+class IsolateWorkgroup {
+  /// Creates a new [IsolateWorkgroup] with the given number of worker isolates.
   ///
-  /// The pool is initially in the [IsolatePoolState.notStarted] state.
-  /// Call [start] to start the pool before using it.
+  /// The workgroup starts in [WorkgroupState.idle]. Call [launch] to start it.
   ///
-  /// Optionally provide [healthConfig] to customize health checking behavior.
-  /// By default, health checking is enabled with sensible defaults.
-  IsolatePool(
-    this.numberOfIsolates, {
-    this.healthConfig = const IsolateHealthConfig(),
-  });
+  /// All initialization options are provided via [WorkgroupConfig].
+  IsolateWorkgroup(
+    int workerCount, {
+    WorkgroupConfig config = const WorkgroupConfig(),
+  })  : isolatesCount = workerCount,
+        _config = config,
+        healthConfig = config.health;
 
-  /// Configuration for isolate health checking.
-  final IsolateHealthConfig healthConfig;
+  /// The [WorkgroupConfig] this workgroup was created with.
+  final WorkgroupConfig _config;
 
-  /// Total number of isolate indices allocated in the pool.
+  /// Health-check configuration for this workgroup.
+  final WorkgroupHealthConfig healthConfig;
+
+  /// Total number of isolate indices allocated in the workgroup.
   ///
   /// This represents the highest isolate index ever assigned + 1, and includes
   /// both alive and killed isolates to maintain stable indices throughout the
-  /// pool's lifetime.
+  /// workgroup's lifetime.
   ///
-  /// After killing an isolate with [killIsolate], this value remains unchanged
+  /// After killing an isolate with [kill], this value remains unchanged
   /// to preserve index stability. New isolates added with [addIsolate] will
   /// receive the next sequential index.
   ///
   /// **Important**: This is NOT the count of currently alive isolates.
-  /// Use [aliveIsolateCount] to get the number of active isolates.
+  /// Use [liveIsolateCount] to get the number of active isolates.
   ///
   /// Example:
   /// ```dart
-  /// final pool = IsolatePool(3);
-  /// await pool.start();
-  /// print(pool.numberOfIsolates); // 3
-  /// print(pool.aliveIsolateCount); // 3
+  /// final pool = IsolateWorkgroup(3);
+  /// await pool.launch();
+  /// print(pool.isolatesCount); // 3
+  /// print(pool.liveIsolateCount); // 3
   ///
-  /// pool.killIsolate(1);
-  /// print(pool.numberOfIsolates); // Still 3 (indices: 0, 1, 2)
-  /// print(pool.aliveIsolateCount); // 2 (only 0 and 2 are alive)
+  /// pool.kill(1);
+  /// print(pool.isolatesCount); // Still 3 (indices: 0, 1, 2)
+  /// print(pool.liveIsolateCount); // 2 (only 0 and 2 are alive)
   ///
   /// await pool.addIsolate();
-  /// print(pool.numberOfIsolates); // 4 (indices: 0, 1, 2, 3)
-  /// print(pool.aliveIsolateCount); // 3 (0, 2, and 3 are alive)
+  /// print(pool.isolatesCount); // 4 (indices: 0, 1, 2, 3)
+  /// print(pool.liveIsolateCount); // 3 (0, 2, and 3 are alive)
   /// ```
-  int numberOfIsolates;
+  int isolatesCount;
 
-  final Map<int, Completer<PooledInstanceProxy>> _creationCompleters = {};
+  final Map<int, Completer<MemberProxy>> _creationCompleters = {};
   final List<bool> _isolateBusyWithJob = [];
   final Map<int, Isolate> _isolates = {};
   final Map<int, Completer> _jobCompleters = {};
-  final Map<int, PooledJobRequest> _jobs = {};
+  final Map<int, WorkgroupJobRequest> _jobs = {};
   final Map<String, ReceivePort> _mainReceivePorts = {};
   final Map<String, Stream<dynamic>> _mainReceivePortsStreams = {};
   final Map<int, SendPort?> _mainToWorkerSendPorts = {};
@@ -90,18 +94,16 @@ class IsolatePool {
   final Map<String, SendPort> _workerToMainSendPorts = {};
 
   double _avgMicroseconds = 0;
-  FutureOr<void> Function()? _initFn;
-  bool _errorsAreFatal = false;
 
   // Map of error handlers by type
   final Map<IsolateErrorType, void Function(Object error)> _errorHandlers = {};
 
   // Health tracking
-  final Map<int, IsolateHealthInfo> _isolateHealth = {};
+  final Map<int, WorkgroupHealthInfo> _isolateHealth = {};
 
   int _isolatesStarted = 0;
   int _lastJobStartedIndex = 0;
-  IsolatePoolState _state = IsolatePoolState.notStarted;
+  WorkgroupState _state = WorkgroupState.idle;
 
   /// Maps of Streams of error messages from each isolate, keyed by debug name.
   Map<String, Stream<dynamic>> get errorReceivePortsStreamsMap => _poolErrorReceivePortsStreams;
@@ -109,10 +111,10 @@ class IsolatePool {
   /// Gets health status information for all isolates.
   ///
   /// Returns a map of isolate index to health information.
-  Map<int, IsolateHealthInfo> get healthStatus {
+  Map<int, WorkgroupHealthInfo> get healthStatus {
     if (!healthConfig.enabled) return {};
 
-    return Map.fromEntries(
+    return Map<int, WorkgroupHealthInfo>.fromEntries(
       _isolateHealth.entries.map((entry) {
         final health = entry.value;
         return MapEntry(entry.key, health);
@@ -131,31 +133,31 @@ class IsolatePool {
   Map<int, SendPort?> get mainToWorkerSendPorts => _mainToWorkerSendPorts;
 
   /// Number of pending requests awaiting response.
-  int get numberOfPendingRequests => _requestCompleters.length;
+  int get pendingCount => _requestCompleters.length;
 
   /// Number of pooled instances currently managed by this pool.
-  int get numberOfPooledInstances => _pooledInstances.length;
+  int get memberCount => _pooledInstances.length;
 
-  /// Number of currently active isolates in the pool.
+  /// Number of currently active isolates in the workgroup.
   ///
   /// This returns the count of active isolates that can accept jobs and instances.
-  /// Unlike [numberOfIsolates], this count decreases when isolates are killed
+  /// Unlike [isolatesCount], this count decreases when isolates are killed
   /// and increases when new isolates are added.
   ///
   /// Example:
   /// ```dart
-  /// final pool = IsolatePool(4);
-  /// await pool.start();
-  /// print(pool.aliveIsolateCount); // 4
+  /// final pool = IsolateWorkgroup(4);
+  /// await pool.launch();
+  /// print(pool.liveIsolateCount); // 4
   ///
-  /// pool.killIsolate(1);
-  /// pool.killIsolate(3);
-  /// print(pool.aliveIsolateCount); // 2 (only isolates 0 and 2 remain)
+  /// pool.kill(1);
+  /// pool.kill(3);
+  /// print(pool.liveIsolateCount); // 2 (only isolates 0 and 2 remain)
   ///
   /// await pool.addIsolate();
-  /// print(pool.aliveIsolateCount); // 3 (isolates 0, 2, and 4)
+  /// print(pool.liveIsolateCount); // 3 (isolates 0, 2, and 4)
   /// ```
-  int get aliveIsolateCount => _isolates.length;
+  int get liveIsolateCount => _isolates.length;
 
   /// Map of pooled instances, keyed by instance ID.
   Map<int, InstanceMapEntry> get pooledInstances => _pooledInstances;
@@ -175,10 +177,10 @@ class IsolatePool {
   /// Future that completes when the pool has started.
   ///
   /// You can await this future to ensure the pool is ready before using it.
-  Future get started => _started.future;
+  Future get ready => _started.future;
 
   /// Current state of the isolate pool.
-  IsolatePoolState get state => _state;
+  WorkgroupState get state => _state;
 
   /// Get map of send ports from worker isolates back to main isolate
   Map<String, SendPort> get workerToMainSendPorts => _workerToMainSendPorts;
@@ -186,37 +188,27 @@ class IsolatePool {
   /// Returns the isolate index where the given instance is running.
   ///
   /// Returns -1 if the instance is not found.
-  int indexOfInstance(PooledInstanceProxy instance) {
+  int indexOfInstance(MemberProxy instance) {
     if (!_pooledInstances.containsKey(instance.instanceId)) return -1;
     return _pooledInstances[instance.instanceId]!.isolateIndex;
   }
 
   /// Starts the isolate pool.
   ///
-  /// Parameters:
-  /// - [init]: Optional function to initialize each isolate's environment
-  /// - [errorsAreFatal]: If true, errors in isolates propagate to the main isolate
-  /// - [debugLabel]: Function to generate debug labels for isolates
-  /// - [initializationPolicy]: Controls whether isolates start sequentially or concurrently
-  ///
   /// Throws if:
-  /// - [init] is not a top-level function or static method
+  /// - [WorkgroupConfig.onSetup] is not a top-level function or static method
   /// - Initializing an isolate fails
-  Future<void> start({
-    FutureOr<void> Function()? init,
-    bool errorsAreFatal = false,
-    String Function(int)? debugLabel,
-    InitializationPolicy policy = InitializationPolicy.concurrent,
-  }) async {
-    // Check if already started
-    if (_state != IsolatePoolState.notStarted) {
-      throw IsolatePoolException('Pool has already been started or stopped');
+  Future<void> launch() async {
+    if (_state != WorkgroupState.idle) {
+      throw WorkgroupException('Workgroup has already been launched or shut down');
     }
 
-    _initFn = init;
-    _errorsAreFatal = errorsAreFatal;
+    final init = _config.onSetup;
+    final errorsAreFatal = _config.fatalErrors;
+    final debugLabel = _config.labelBuilder;
+    final policy = _config.startupPolicy;
 
-    print('Creating a pool of $numberOfIsolates running isolates');
+    print('Creating a workgroup of $isolatesCount running isolates');
 
     _isolatesStarted = 0;
     _avgMicroseconds = 0;
@@ -226,8 +218,8 @@ class IsolatePool {
     final stopWatches = <int, Stopwatch>{};
 
     // Handle empty pool case
-    if (numberOfIsolates == 0) {
-      _state = IsolatePoolState.started;
+    if (isolatesCount == 0) {
+      _state = WorkgroupState.active;
       if (!last.isCompleted) {
         last.complete();
       }
@@ -237,7 +229,7 @@ class IsolatePool {
       return last.future;
     }
 
-    for (var i = 0; i < numberOfIsolates; i++) {
+    for (var i = 0; i < isolatesCount; i++) {
       _initializeIsolateDataStructures(i);
 
       final debugName = debugLabel?.call(i) ?? 'pooled_isolate_$i';
@@ -265,7 +257,7 @@ class IsolatePool {
         errorSendPort,
         i,
         sw,
-        initFunc: _initFn,
+        initFunc: init,
         policy: policy,
         debugName: debugName,
       );
@@ -275,7 +267,7 @@ class IsolatePool {
         () => _spawnSingleIsolate(
           isolateIndex: i,
           params: params,
-          errorsAreFatal: _errorsAreFatal,
+          errorsAreFatal: errorsAreFatal,
           debugName: debugName,
           errorSendPort: errorSendPort,
           paused: policy == InitializationPolicy.sequential,
@@ -292,7 +284,7 @@ class IsolatePool {
 
       // Initialize health tracking for this isolate
       if (healthConfig.enabled) {
-        _isolateHealth.putIfAbsent(entry.key, () => IsolateHealthInfo._(isolateIndex: entry.key));
+        _isolateHealth.putIfAbsent(entry.key, () => WorkgroupHealthInfo._(isolateIndex: entry.key));
       }
 
       // Resume only the first isolate for sequential initialization
@@ -304,15 +296,15 @@ class IsolatePool {
 
     spawnSw.stop();
 
-    print('spawn() called on $numberOfIsolates isolates (${spawnSw.elapsedMicroseconds} microseconds)');
+    print('spawn() called on $isolatesCount workers (${spawnSw.elapsedMicroseconds} microseconds)');
 
     return last.future;
   }
 
-  /// Schedules a job on one of the pool's isolates.
+  /// Dispatches a job to one of the workgroup's isolates.
   ///
   /// Parameters:
-  /// - [job]: The job to schedule
+  /// - [job]: The job to dispatch
   /// - [isolateIndex]: Index of isolate to run the job on, or -1 for any available isolate
   ///
   /// Returns a [Future] that completes with the job result or throws if the job fails.
@@ -320,32 +312,32 @@ class IsolatePool {
   /// stack trace showing both where the error originated in the isolate and where it
   /// was caught in the main isolate.
   ///
-  /// Throws [IsolatePoolStoppedException] if the pool has been stopped.
-  /// Throws [IsolatePoolException] if the specified isolate index is invalid or if the job
+  /// Throws [WorkgroupInactiveException] if the workgroup has been shut down.
+  /// Throws [WorkgroupException] if the specified isolate index is invalid or if the job
   /// contains non-sendable objects (e.g., closures that capture StreamControllers or other
   /// non-sendable state).
   ///
-  /// **Important**: If you're using closures in your PooledJob, make sure they don't capture
+  /// **Important**: If you're using closures in your [WorkgroupJob], make sure they don't capture
   /// non-sendable objects. Prefer static or top-level functions to avoid accidentally
   /// capturing the entire parent object's state.
-  Future<T> scheduleJob<T>(PooledJob<T> job, [int? isolateIndex]) {
+  Future<T> dispatch<T>(WorkgroupJob<T> job, [int? isolateIndex]) {
     isolateIndex ??= -1;
 
-    if (state == IsolatePoolState.stopped) {
-      throw IsolatePoolStoppedException('Isolate pool has been stopped, cannot schedule a job');
+    if (state == WorkgroupState.disposed) {
+      throw WorkgroupInactiveException('Workgroup has been shut down, cannot dispatch a job');
     }
 
     // Validate isolate index early
-    if (isolateIndex < -1 || isolateIndex >= numberOfIsolates) {
-      throw IsolatePoolException(
-        'Invalid isolate index $isolateIndex (only $numberOfIsolates isolates available). Valid indices are 0...${numberOfIsolates - 1}, or -1 to use any available isolate.',
+    if (isolateIndex < -1 || isolateIndex >= isolatesCount) {
+      throw WorkgroupException(
+        'Invalid isolate index $isolateIndex (only $isolatesCount isolates available). Valid indices are 0...${isolatesCount - 1}, or -1 to use any available isolate.',
       );
     }
 
     // Check if the specific isolate has been killed
     if (isolateIndex >= 0 && !_isolates.containsKey(isolateIndex)) {
-      throw IsolatePoolException(
-        'Cannot schedule job on isolate $isolateIndex - this isolate has been killed or does not exist.',
+      throw WorkgroupException(
+        'Cannot dispatch job to isolate $isolateIndex - this isolate has been killed or does not exist.',
       );
     }
 
@@ -353,14 +345,14 @@ class IsolatePool {
     final completer = Completer<T>();
 
     _jobCompleters[jobIndex] = completer;
-    _jobs[jobIndex] = PooledJobRequest<T>(job, jobIndex, isolateIndex);
+    _jobs[jobIndex] = WorkgroupJobRequest<T>(job, jobIndex, isolateIndex);
 
     _runJobWithVacantIsolate();
 
     return completer.future;
   }
 
-  /// Creates a persistent instance in one of the pool's isolates.
+  /// Creates a persistent instance in one of the workgroup's isolates.
   ///
   /// Parameters:
   /// - [instance]: The instance to create
@@ -369,16 +361,16 @@ class IsolatePool {
   ///   which means the instance will be created in the isolate with the fewest instances)
   ///
   /// Returns a [Future] that completes with a proxy to the instance.
-  Future<PooledInstanceProxy<T>> addInstance<T>(
-    PooledInstance instance, {
-    PooledCallback<T>? callback,
+  Future<MemberProxy<T>> addInstance<T>(
+    WorkgroupMember instance, {
+    MemberCallback<T>? callback,
     int? isolateIndex,
   }) async {
     // Validate that the instance can be sent to an isolate
     final validationErrors = instance.validateForIsolate();
 
     if (validationErrors.isNotEmpty) {
-      throw IsolatePoolException(
+      throw WorkgroupException(
         'Instance contains validation errors:\n'
         '${validationErrors.join('\n')}',
         StackTrace.current,
@@ -387,23 +379,23 @@ class IsolatePool {
 
     isolateIndex ??= -1;
 
-    if (state == IsolatePoolState.stopped) {
-      throw IsolatePoolStoppedException('Isolate pool has been stopped, cannot add an instance');
+    if (state == WorkgroupState.disposed) {
+      throw WorkgroupInactiveException('Workgroup has been shut down, cannot add an instance');
     }
 
     // If a specific isolate is requested and it's valid, use it
     int targetIsolateIndex;
-    if (isolateIndex >= 0 && isolateIndex < numberOfIsolates) {
+    if (isolateIndex >= 0 && isolateIndex < isolatesCount) {
       // Check if the specific isolate has been killed
       if (!_isolates.containsKey(isolateIndex)) {
-        throw IsolatePoolException(
+        throw WorkgroupException(
           'Cannot add instance to isolate $isolateIndex - this isolateIndex has been killed or does not exist.',
         );
       }
       targetIsolateIndex = isolateIndex;
-    } else if (isolateIndex >= numberOfIsolates) {
-      throw IsolatePoolException(
-        "Invalid isolate index $isolateIndex (only $numberOfIsolates isolates available). Valid indices are 0...${numberOfIsolates - 1}.",
+    } else if (isolateIndex >= isolatesCount) {
+      throw WorkgroupException(
+        "Invalid isolate index $isolateIndex (only $isolatesCount isolates available). Valid indices are 0...${isolatesCount - 1}.",
       );
     } else {
       // Otherwise find the isolate with the fewest instances (that is still alive)
@@ -411,7 +403,7 @@ class IsolatePool {
       var minIndex = -1; // index of isolate with the least instances
 
       // Find the isolate with the fewest instances
-      for (var i = 0; i < numberOfIsolates; i++) {
+      for (var i = 0; i < isolatesCount; i++) {
         // Skip killed isolates
         if (!_isolates.containsKey(i)) continue;
 
@@ -424,7 +416,7 @@ class IsolatePool {
       }
 
       if (minIndex == -1) {
-        throw IsolatePoolException(
+        throw WorkgroupException(
           'No alive isolates available to add instance. All isolates may have been killed.',
         );
       }
@@ -433,9 +425,9 @@ class IsolatePool {
     }
 
     final sendPort = _mainToWorkerSendPorts[targetIsolateIndex];
-    final proxy = PooledInstanceProxy(
-      instanceId: instance.instanceId,
-      isolateId: targetIsolateIndex,
+    final proxy = MemberProxy(
+      memberId: instance.memberId,
+      workerIndex: targetIsolateIndex,
       pool: this,
       remoteCallback: callback,
       sendPort: sendPort,
@@ -443,7 +435,7 @@ class IsolatePool {
 
     _pooledInstances[proxy.instanceId] = InstanceMapEntry<T>(proxy, targetIsolateIndex);
 
-    final completer = Completer<PooledInstanceProxy<T>>();
+    final completer = Completer<MemberProxy<T>>();
     _creationCompleters[proxy.instanceId] = completer;
 
     if (healthConfig.enabled && healthConfig.checkBeforeDispatching) {
@@ -451,7 +443,7 @@ class IsolatePool {
       if (!isHealthy) {
         _creationCompleters.remove(proxy.instanceId);
         _pooledInstances.remove(proxy.instanceId);
-        throw IsolateDeadException(
+        throw WorkgroupMemberDeadException(
           targetIsolateIndex,
           'Cannot create instance on isolate #$targetIsolateIndex - isolate is not responsive',
         );
@@ -461,7 +453,7 @@ class IsolatePool {
     if (sendPort == null) {
       _creationCompleters.remove(proxy.instanceId);
       _pooledInstances.remove(proxy.instanceId);
-      throw IsolatePoolException('SendPort is null for isolate $targetIsolateIndex. The isolate may not be fully initialized.');
+      throw WorkgroupException('SendPort is null for isolate $targetIsolateIndex. The isolate may not be fully initialized.');
     }
 
     try {
@@ -488,9 +480,9 @@ class IsolatePool {
   /// - [isolate]: Optional index of the isolate where the instance should be destroyed.
   ///   If not specified, uses the isolate where the instance was originally created.
   ///
-  /// Throws [NoSuchIsolateInstanceException] if the instance is not found.
-  /// Throws [IsolatePoolException] if the specified isolate index is invalid.
-  void destroyInstance(PooledInstanceProxy instance, {int? isolate}) {
+  /// Throws [WorkgroupMemberNotFoundException] if the instance is not found.
+  /// Throws [WorkgroupException] if the specified isolate index is invalid.
+  void destroyInstance(MemberProxy instance, {int? isolate}) {
     // Guard: Check if already destroyed or never existed
     if (!_pooledInstances.containsKey(instance.instanceId)) {
       print('⚠️ Warning: Instance ${instance.instanceId} already destroyed or does not exist. Skipping destroyInstance call.');
@@ -501,16 +493,16 @@ class IsolatePool {
     final targetIndex = isolate ?? indexOfInstance(instance);
 
     if (targetIndex == -1) {
-      throw NoSuchIsolateInstanceException(
+      throw WorkgroupMemberNotFoundException(
         'Cannot find instance with ID ${instance.instanceId} to destroy it!',
       );
     }
 
     // Validate isolate index
-    if (targetIndex < 0 || targetIndex >= numberOfIsolates) {
-      throw IsolatePoolException(
-        'Invalid isolate index $targetIndex (only $numberOfIsolates isolates available). '
-        'Valid indices are 0...${numberOfIsolates - 1}.',
+    if (targetIndex < 0 || targetIndex >= isolatesCount) {
+      throw WorkgroupException(
+        'Invalid isolate index $targetIndex (only $isolatesCount isolates available). '
+        'Valid indices are 0...${isolatesCount - 1}.',
       );
     }
 
@@ -518,7 +510,7 @@ class IsolatePool {
     if (isolate != null) {
       final actualIsolateIndex = indexOfInstance(instance);
       if (actualIsolateIndex != isolate) {
-        throw IsolatePoolException(
+        throw WorkgroupException(
           'Instance ${instance.instanceId} is on isolate $actualIsolateIndex, not on isolate $isolate',
         );
       }
@@ -527,7 +519,7 @@ class IsolatePool {
     final sendPort = _mainToWorkerSendPorts[targetIndex];
 
     if (sendPort == null) {
-      throw IsolatePoolException(
+      throw WorkgroupException(
         'SendPort is null for isolate $targetIndex. The isolate may not be fully initialized.',
       );
     }
@@ -536,17 +528,17 @@ class IsolatePool {
     _pooledInstances.remove(instance.instanceId);
   }
 
-  /// Stops the isolate pool.
+  /// Shuts down the workgroup.
   ///
   /// All isolates are killed, and pending jobs and requests are cancelled.
-  /// After calling this method, the pool cannot be restarted.
-  void stop() {
+  /// After calling this method, the workgroup cannot be restarted.
+  void shutdown() {
     for (final isolate in _isolates.values) {
       isolate.kill();
 
       for (final completer in _jobCompleters.values) {
         if (!completer.isCompleted) {
-          completer.completeError(IsolatePoolJobCancelledException('Isolate pool stopped upon request, cancelling jobs'));
+          completer.completeError(WorkgroupJobAbortedException('Workgroup shut down upon request, cancelling jobs'));
         }
       }
       _jobCompleters.clear();
@@ -554,8 +546,8 @@ class IsolatePool {
       for (final completer in _creationCompleters.values) {
         if (!completer.isCompleted) {
           completer.completeError(
-            IsolatePoolJobCancelledException(
-              'Isolate pool stopped upon request, cancelling instance creation requests',
+            WorkgroupJobAbortedException(
+              'Workgroup shut down upon request, cancelling instance creation requests',
             ),
           );
         }
@@ -564,8 +556,8 @@ class IsolatePool {
 
       for (final completer in _requestCompleters.values) {
         if (!completer.isCompleted) {
-          completer.completeError(IsolatePoolJobCancelledException(
-            'Isolate pool stopped upon request, cancelling pending request',
+          completer.completeError(WorkgroupJobAbortedException(
+            'Workgroup shut down upon request, cancelling pending request',
           ));
         }
       }
@@ -579,67 +571,67 @@ class IsolatePool {
     _mainReceivePorts.clear();
     _workerToMainSendPorts.clear();
     _mainToWorkerSendPorts.clear();
-    _state = IsolatePoolState.stopped;
+    _state = WorkgroupState.disposed;
   }
 
-  /// Kills and removes a specific isolate from the pool.
+  /// Kills and removes a specific isolate from the workgroup.
   ///
-  /// This method completely removes an isolate from the pool, including:
+  /// This method completely removes an isolate from the workgroup, including:
   /// - Killing the isolate
   /// - Cancelling all pending jobs on that isolate
   /// - Destroying all instances on that isolate
   /// - Cancelling all pending requests for instances on that isolate
   /// - Cleaning up all associated resources
   ///
-  /// Other isolates in the pool remain unaffected and continue running normally.
+  /// Other isolates in the workgroup remain unaffected and continue running normally.
   ///
-  /// **Note**: The [numberOfIsolates] value remains unchanged to maintain index
-  /// stability. Use [aliveIsolateCount] to get the count of active isolates.
+  /// **Note**: The [isolatesCount] value remains unchanged to maintain index
+  /// stability. Use [liveIsolateCount] to get the count of active isolates.
   ///
   /// Parameters:
-  /// - [isolateIndex]: The index of the isolate to remove (0 to numberOfIsolates-1)
+  /// - [isolateIndex]: The index of the isolate to remove (0 to isolatesCount-1)
   ///
   /// Throws:
-  /// - [IsolatePoolException] if the isolate index is invalid
-  /// - [IsolatePoolStoppedException] if the pool has been stopped
+  /// - [WorkgroupException] if the isolate index is invalid
+  /// - [WorkgroupInactiveException] if the workgroup has been shut down
   ///
   /// Example:
   /// ```dart
-  /// final pool = IsolatePool(4);
-  /// await pool.start();
-  /// print(pool.numberOfIsolates); // 4
-  /// print(pool.aliveIsolateCount); // 4
+  /// final pool = IsolateWorkgroup(4);
+  /// await pool.launch();
+  /// print(pool.isolatesCount); // 4
+  /// print(pool.liveIsolateCount); // 4
   ///
   /// // Kill isolate at index 2
-  /// pool.killIsolate(2);
+  /// pool.kill(2);
   ///
-  /// print(pool.numberOfIsolates); // Still 4 (indices 0,1,2,3 allocated)
-  /// print(pool.aliveIsolateCount); // 3 (only 0,1,3 are alive)
+  /// print(pool.isolatesCount); // Still 4 (indices 0,1,2,3 allocated)
+  /// print(pool.liveIsolateCount); // 3 (only 0,1,3 are alive)
   ///
   /// // Can still use isolates 0, 1, and 3
-  /// await pool.scheduleJob(MyJob(), 0); // ✓ Works
-  /// await pool.scheduleJob(MyJob(), 2); // ✗ Throws - isolate 2 is dead
+  /// await pool.dispatch(MyJob(), 0); // ✓ Works
+  /// await pool.dispatch(MyJob(), 2); // ✗ Throws - isolate 2 is dead
   /// ```
-  void killIsolate(int isolateIndex) {
+  void kill(int isolateIndex) {
     // Validate pool state
-    if (_state == IsolatePoolState.stopped) {
-      throw IsolatePoolStoppedException('Cannot kill isolate - pool has been stopped');
+    if (_state == WorkgroupState.disposed) {
+      throw WorkgroupInactiveException('Cannot kill isolate - workgroup has been shut down');
     }
 
-    if (_state != IsolatePoolState.started) {
-      throw IsolatePoolException('Cannot kill isolate - pool is not started');
+    if (_state != WorkgroupState.active) {
+      throw WorkgroupException('Cannot kill isolate - workgroup is not active');
     }
 
     // Validate isolate index
-    if (isolateIndex < 0 || isolateIndex >= numberOfIsolates) {
-      throw IsolatePoolException(
-        'Invalid isolate index $isolateIndex. Valid indices are 0...${numberOfIsolates - 1}',
+    if (isolateIndex < 0 || isolateIndex >= isolatesCount) {
+      throw WorkgroupException(
+        'Invalid isolate index $isolateIndex. Valid indices are 0...${isolatesCount - 1}',
       );
     }
 
     // Check if isolate exists
     if (!_isolates.containsKey(isolateIndex)) {
-      throw IsolatePoolException('Isolate at index $isolateIndex does not exist or has already been removed');
+      throw WorkgroupException('Isolate at index $isolateIndex does not exist or has already been removed');
     }
 
     print('⚠️ Killing isolate #$isolateIndex and removing it from the pool');
@@ -662,7 +654,7 @@ class IsolatePool {
       final completer = _jobCompleters[jobId];
       if (completer != null && !completer.isCompleted) {
         completer.completeError(
-          IsolatePoolException('Isolate #$isolateIndex was killed - job cancelled'),
+          WorkgroupException('Isolate #$isolateIndex was killed - job cancelled'),
         );
       }
       _jobs.remove(jobId);
@@ -682,7 +674,7 @@ class IsolatePool {
       final creationCompleter = _creationCompleters[instanceId];
       if (creationCompleter != null && !creationCompleter.isCompleted) {
         creationCompleter.completeError(
-          IsolatePoolException(
+          WorkgroupException(
             'Isolate #$isolateIndex was killed - instance creation cancelled',
           ),
         );
@@ -708,7 +700,7 @@ class IsolatePool {
       final completer = _requestCompleters[requestId];
       if (completer != null && !completer.isCompleted) {
         completer.completeError(
-          IsolatePoolException(
+          WorkgroupException(
             'Isolate #$isolateIndex was killed - request cancelled',
           ),
         );
@@ -753,16 +745,16 @@ class IsolatePool {
     // Remove health tracking
     _isolateHealth.remove(isolateIndex);
 
-    // Do NOT decrement numberOfIsolates here - keep indices stable
+    // Do NOT decrement isolatesCount here - keep indices stable
     // The isolate at index 'isolateIndex' is now permanently removed
     // but other isolate indices remain unchanged
 
-    print('❌ Isolate #$isolateIndex has been killed and removed from the pool');
+    print('❌ Isolate #$isolateIndex has been killed and removed from the workgroup');
   }
 
-  /// Adds a single isolate to the running pool.
+  /// Adds a single isolate to the running workgroup.
   ///
-  /// This method can only be called when the pool is in the [IsolatePoolState.started] state.
+  /// This method can only be called when the workgroup is in the [WorkgroupState.active] state.
   /// Only one isolate is added at a time to avoid race conditions and manage resources properly.
   ///
   /// Parameters:
@@ -770,22 +762,22 @@ class IsolatePool {
   ///
   /// Returns the index of the new isolate.
   ///
-  /// Throws [IsolatePoolException] if:
-  /// - The pool is not in the started state
+  /// Throws [WorkgroupException] if:
+  /// - The workgroup is not in the active state
   /// - Isolate spawn fails
   /// - Initialization fails
   Future<int> addIsolate({
     String? debugLabel,
   }) async {
     // Validate pool state
-    if (_state != IsolatePoolState.started) {
-      throw IsolatePoolException(
-        'Cannot add isolate to pool in state $_state.\n'
-        'Pool must be in [started] state. Consider calling the [start()] method first.',
+    if (_state != WorkgroupState.active) {
+      throw WorkgroupException(
+        'Cannot add isolate to workgroup in state $_state.\n'
+        'Workgroup must be in [active] state. Consider calling the [launch()] method first.',
       );
     }
 
-    final newIsolateIndex = numberOfIsolates;
+    final newIsolateIndex = isolatesCount;
     final debugName = switch (debugLabel) {
       null => 'pooled_isolate_$newIsolateIndex',
       String() => '${debugLabel}_$newIsolateIndex',
@@ -813,7 +805,7 @@ class IsolatePool {
         errorSendPort,
         newIsolateIndex,
         sw,
-        initFunc: _initFn,
+        initFunc: _config.onSetup,
         policy: InitializationPolicy.concurrent,
         debugName: debugName,
       );
@@ -822,7 +814,7 @@ class IsolatePool {
       final isolate = await _spawnSingleIsolate(
         isolateIndex: newIsolateIndex,
         params: params,
-        errorsAreFatal: _errorsAreFatal,
+        errorsAreFatal: _config.fatalErrors,
         debugName: debugName,
         errorSendPort: errorSendPort,
         paused: false,
@@ -835,7 +827,7 @@ class IsolatePool {
       if (healthConfig.enabled) {
         _isolateHealth.putIfAbsent(
           newIsolateIndex,
-          () => IsolateHealthInfo._(isolateIndex: newIsolateIndex),
+          () => WorkgroupHealthInfo._(isolateIndex: newIsolateIndex),
         );
       }
 
@@ -860,8 +852,8 @@ class IsolatePool {
       // - Without waiting, we might try to send messages before it's listening
       //
       // LINKING WITH MAIN INITIALIZATION FLOW:
-      // This follows the same pattern as start(), but simplified for a single isolate:
-      // - start() spawns multiple isolates and waits for all via a shared Completer
+      // This follows the same pattern as launch(), but simplified for a single isolate:
+      // - launch() spawns multiple isolates and waits for all via a shared Completer
       // - addIsolate() spawns one isolate and waits for just that one
       // - Both use the same message protocol: worker sends PooledIsolateParams back
       // - Both update _mainToWorkerSendPorts with the worker's SendPort
@@ -878,7 +870,7 @@ class IsolatePool {
 
           if (!isInTest) {
             print(
-              '[isolate_pool_2]: Isolate #$newIsolateIndex added and initialized, '
+              '[isolate_workgroup]: Isolate #$newIsolateIndex added and initialized, '
               'took ${sw.elapsedMilliseconds} milliseconds',
             );
           }
@@ -887,7 +879,7 @@ class IsolatePool {
             initCompleter.completeError(data.initializationError);
           } else {
             // Successfully added isolate - increment the count
-            numberOfIsolates++;
+            isolatesCount++;
             initCompleter.complete();
           }
 
@@ -905,7 +897,7 @@ class IsolatePool {
       // Rollback on failure
       _rollbackIsolateAddition(newIsolateIndex, debugName);
 
-      throw IsolatePoolException('Failed to add isolate to pool: $e', st);
+      throw WorkgroupException('Failed to add isolate to workgroup: $e', st);
     }
   }
 
@@ -972,7 +964,7 @@ class IsolatePool {
         completer.complete(_pooledInstances[response.instanceId]!.instance);
       }
       _creationCompleters.remove(response.instanceId);
-      _pooledInstances[response.instanceId]!.state = PooledInstanceStatus.started;
+      _pooledInstances[response.instanceId]!.state = WorkgroupMemberStatus.started;
 
       final isolateIndex = _pooledInstances[response.instanceId]!.isolateIndex;
       _updateHealthSuccess(isolateIndex);
@@ -1003,9 +995,9 @@ class IsolatePool {
       }
     }
 
-    if (_isolatesStarted == numberOfIsolates) {
-      _avgMicroseconds /= numberOfIsolates;
-      print('Average time to start an isolate: $_avgMicroseconds microseconds');
+    if (_isolatesStarted == isolatesCount) {
+      _avgMicroseconds /= isolatesCount;
+      print('Average time to start a worker: $_avgMicroseconds microseconds');
 
       if (!completer.isCompleted) {
         completer.complete();
@@ -1015,7 +1007,7 @@ class IsolatePool {
         _started.complete();
       }
 
-      _state = IsolatePoolState.started;
+      _state = WorkgroupState.active;
 
       // Setup global error handling for isolate errors
       for (final errorPort in _poolErrorReceivePorts.values) {
@@ -1029,7 +1021,7 @@ class IsolatePool {
     }
   }
 
-  void _processJobResult(PooledJobResult result) {
+  void _processJobResult(WorkgroupJobResult result) {
     _isolateBusyWithJob[result.isolateIndex] = false; // Mark isolate as available
 
     // Update health status - successful job completion means isolate is healthy
@@ -1053,7 +1045,7 @@ class IsolatePool {
         final callerStackTrace = StackTrace.current;
 
         // Direct error propagation based on error type
-        if (error is IsolateError) {
+        if (error is WorkgroupIsolateError) {
           // Create a combined stack trace for better debugging
           final combinedError = error.withCombinedStackTrace(callerStackTrace);
 
@@ -1108,12 +1100,12 @@ class IsolatePool {
   }
 
   void _runJobWithVacantIsolate() {
-    if (state != IsolatePoolState.started) {
-      throw IsolatePoolException("WARNING: Attempting to run job when pool is not started (state: $state)");
+    if (state != WorkgroupState.active) {
+      throw WorkgroupException("WARNING: Attempting to run job when workgroup is not active (state: $state)");
     }
 
     if (_mainToWorkerSendPorts.isEmpty) {
-      throw IsolatePoolException("ERROR: No send ports available! Isolates may not be properly initialized.");
+      throw WorkgroupException("ERROR: No send ports available! Isolates may not be properly initialized.");
     }
 
     // Find first alive isolate that is not busy
@@ -1136,14 +1128,14 @@ class IsolatePool {
     if (availableIsolateIndex == -1) {
       // Even if all isolates are busy, pick any random ALIVE isolate to process the job
       final aliveIsolates = <int>[];
-      for (var i = 0; i < numberOfIsolates; i++) {
+      for (var i = 0; i < isolatesCount; i++) {
         if (_isolates.containsKey(i)) {
           aliveIsolates.add(i);
         }
       }
 
       if (aliveIsolates.isEmpty) {
-        throw IsolatePoolException('No alive isolates available to run jobs. All isolates may have been killed.');
+        throw WorkgroupException('No alive isolates available to run jobs. All isolates may have been killed.');
       }
 
       final randomIndex = math.Random().nextInt(aliveIsolates.length);
@@ -1154,19 +1146,19 @@ class IsolatePool {
 
     // Use the isolate index specified in the job if it exists, otherwise use the available isolate index
     if (job.isolateIndex < 0 && availableIsolateIndex > -1) {
-      if (availableIsolateIndex > numberOfIsolates - 1) {
-        throw BadResponseReceivedException(
-          "ERROR: Invalid isolate index $availableIsolateIndex (only $numberOfIsolates isolates available).\n"
-          "Valid indices are 0...${numberOfIsolates - 1}.",
+      if (availableIsolateIndex > isolatesCount - 1) {
+        throw InvalidWorkgroupResponseException(
+          "ERROR: Invalid isolate index $availableIsolateIndex (only $isolatesCount isolates available).\n"
+          "Valid indices are 0...${isolatesCount - 1}.",
           StackTrace.current,
         );
       }
 
       job = job.copyWith(isolateIndex: availableIsolateIndex);
-    } else if (job.isolateIndex > numberOfIsolates - 1) {
-      throw BadResponseReceivedException(
-        "ERROR: Invalid isolate index ${job.isolateIndex} (only $numberOfIsolates isolates available).\n"
-        "Valid indices are 0...${numberOfIsolates - 1}.",
+    } else if (job.isolateIndex > isolatesCount - 1) {
+      throw InvalidWorkgroupResponseException(
+        "ERROR: Invalid isolate index ${job.isolateIndex} (only $isolatesCount isolates available).\n"
+        "Valid indices are 0...${isolatesCount - 1}.",
         StackTrace.current,
       );
     }
@@ -1194,7 +1186,7 @@ class IsolatePool {
   }
 
   /// Dispatches a job to its assigned isolate.
-  void _dispatchJobToIsolate(PooledJobRequest job) {
+  void _dispatchJobToIsolate(WorkgroupJobRequest job) {
     try {
       job = job.copyWith(started: true);
 
@@ -1208,7 +1200,7 @@ class IsolatePool {
       final sendPort = _mainToWorkerSendPorts[job.isolateIndex];
 
       if (sendPort == null) {
-        throw IsolatePoolException(
+        throw WorkgroupException(
           'SendPort is null for isolate ${job.isolateIndex}.\n'
           'The isolate may not be fully initialized.',
         );
@@ -1228,22 +1220,22 @@ class IsolatePool {
 
         if (completer != null && !completer.isCompleted) {
           completer.completeError(
-            IsolatePoolException(
+            WorkgroupException(
               'Failed to send job of type ${job.job.runtimeType} to isolate. '
-              'This is likely because your PooledJob uses a closure that captures '
+              'This is likely because your WorkgroupJob uses a closure that captures '
               'non-sendable objects.\n\n'
               'Common causes:\n'
               '1. Using a closure (anonymous function) that captures "this" context\n'
               '   which contains StreamController, Completer, ReceivePort, or other non-sendable objects\n'
               '2. Closure captures variables from outer scope that contain non-sendable objects\n'
-              '3. PooledJob fields directly contain non-sendable objects\n\n'
+              '3. WorkgroupJob fields directly contain non-sendable objects\n\n'
               'Solutions:\n'
               '- Use static or top-level functions instead of closures\n'
               '- Pass function references instead of defining closures inline\n'
-              '- Ensure your PooledJob only contains sendable fields (primitives, String, List, Map, Set)\n'
+              '- Ensure your WorkgroupJob only contains sendable fields (primitives, String, List, Map, Set)\n'
               '- Extract necessary data before creating the job\n\n'
               'For best practices, see:\n'
-              '  https://github.com/definitelyme/isolate_pool_2/blob/v4.2.0/BEST_PRACTICES.md\n\n'
+              '  https://github.com/definitelyme/isolate_workgroup/blob/main/BEST_PRACTICES.md\n\n'
               'Original Dart error:\n$errorString',
               st,
             ),
@@ -1270,15 +1262,15 @@ class IsolatePool {
 
   /// Central handler for errors received from isolates via error ports.
   void _handleIsolateError(dynamic error) async {
-    // Check if this is an IsolateError with a wrapped error
-    final unwrappedError = error is IsolateError ? error.unwrappedError : error;
-    final errorStackTrace = error is IsolateError ? error.originalStackTrace : StackTrace.current;
+    // Check if this is a WorkgroupIsolateError with a wrapped error
+    final unwrappedError = error is WorkgroupIsolateError ? error.unwrappedError : error;
+    final errorStackTrace = error is WorkgroupIsolateError ? error.originalStackTrace : StackTrace.current;
 
     IsolateErrorType errorType;
 
-    if (error is IsolateInitializationException) {
+    if (error is WorkgroupSetupException) {
       errorType = IsolateErrorType.initialization;
-    } else if (error is IsolateError) {
+    } else if (error is WorkgroupIsolateError) {
       // Determine error type based on error message content
       if (error.message.contains('job execution')) {
         errorType = IsolateErrorType.job;
@@ -1294,7 +1286,7 @@ class IsolatePool {
     }
 
     // Health check: verify if isolate is actually dead after error
-    if (healthConfig.enabled && error is IsolateError) {
+    if (healthConfig.enabled && error is WorkgroupIsolateError) {
       final isolateIndex = error.isolateIndex;
       final isHealthy = await _pingIsolate(isolateIndex);
       if (!isHealthy) {
@@ -1345,9 +1337,9 @@ class IsolatePool {
   ///
   /// Use this when you want to explicitly verify an isolate's health
   /// outside of the normal automatic checking.
-  Future<bool> pingIsolate(int isolateIndex) async {
+  Future<bool> probe(int isolateIndex) async {
     if (!healthConfig.enabled) return true;
-    if (isolateIndex < 0 || isolateIndex >= numberOfIsolates) {
+    if (isolateIndex < 0 || isolateIndex >= isolatesCount) {
       return false;
     }
     return await _pingIsolate(isolateIndex);
@@ -1360,7 +1352,7 @@ class IsolatePool {
   /// Internal method: Ensures isolate is healthy before use.
   ///
   /// This is exposed for use by extensions. Do not call directly from
-  /// application code - use [pingIsolate] or [isIsolateHealthy] instead.
+  /// application code - use [probe] or [isIsolateHealthy] instead.
   @internal
   Future<bool> ensureIsolateHealthyInternal(int isolateIndex) async {
     return await _ensureIsolateHealthy(isolateIndex);
@@ -1396,9 +1388,9 @@ class IsolatePool {
 
     // Set up listener
     receivePortsStreamsMap[debugName]!.listen((data) {
-      if (_state == IsolatePoolState.stopped) {
+      if (_state == WorkgroupState.disposed) {
         _poolErrorSendPorts[debugName]?.send(
-          IsolatePoolStoppedException('Isolate pool has been stopped, cannot receive messages. Type: ${data.runtimeType}'),
+          WorkgroupInactiveException('Workgroup has been shut down, cannot receive messages. Type: ${data.runtimeType}'),
         );
         return;
       }
@@ -1429,13 +1421,13 @@ class IsolatePool {
 
             if (nextIsolateIndex == null) return;
 
-            if (nextIsolateIndex == thisIsolateIndex + 1 && nextIsolateIndex < numberOfIsolates) {
+            if (nextIsolateIndex == thisIsolateIndex + 1 && nextIsolateIndex < isolatesCount) {
               final nextIsolate = _isolates[nextIsolateIndex];
               stopWatches[nextIsolateIndex]?.start();
               nextIsolate?.resume(nextIsolate.pauseCapability!);
             }
           }
-        case PooledJobResult():
+        case WorkgroupJobResult():
           _processJobResult(data);
       }
     });
@@ -1592,7 +1584,7 @@ class IsolatePool {
       final completer = _jobCompleters[jobId];
       if (completer != null && !completer.isCompleted) {
         completer.completeError(
-          IsolateDeadException(
+          WorkgroupMemberDeadException(
             isolateIndex,
             'Isolate #$isolateIndex is not responsive',
           ),
@@ -1626,7 +1618,7 @@ class IsolatePool {
       final completer = _requestCompleters[requestId];
       if (completer != null && !completer.isCompleted) {
         completer.completeError(
-          IsolateDeadException(
+          WorkgroupMemberDeadException(
             isolateIndex,
             'Isolate #$isolateIndex hosting the instance is not responsive',
           ),
@@ -1637,7 +1629,7 @@ class IsolatePool {
     }
 
     // Call error handler if registered
-    final exception = IsolateDeadException(
+    final exception = WorkgroupMemberDeadException(
       isolateIndex,
       'Isolate #$isolateIndex failed health checks and is considered dead',
     );
