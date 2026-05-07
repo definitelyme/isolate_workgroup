@@ -141,4 +141,9 @@ invoke()                                                   │
 
 ## License
 
-MIT
+BSD 3-Clause. See [`LICENSE`](LICENSE) for the full text.
+
+## Contributing
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for setup, workflow, and code-style
+guidelines.

@@ -29,5 +29,8 @@ doc/api/
 .claude/
 coverage/
 
+# Local development scratch (planning notes, etc.) — never committed
+docs/superpowers/
+
 # FVM Version Cache
 .fvm/
