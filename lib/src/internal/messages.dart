@@ -2,15 +2,15 @@ import 'dart:async';
 import 'dart:isolate';
 
 import '../enums.dart';
-import '../pooled_instance.dart';
-import '../pooled_job.dart';
+import '../workgroup_member.dart';
+import '../workgroup_job.dart';
 import 'export.dart';
 
 /// Message to request an action on a pooled instance
 class Request {
   Request(this.instanceId, this.action) : id = requestIdCounter++;
 
-  final Action action;
+  final WorkerCommand action;
   final int id;
   final int instanceId;
 
@@ -63,16 +63,16 @@ class DestroyRequest {
 }
 
 /// Instance status
-enum PooledInstanceStatus { starting, started }
+enum WorkgroupMemberStatus { starting, started }
 
 /// Entry in the instance map
 class InstanceMapEntry<T> {
   InstanceMapEntry(this.instance, this.isolateIndex);
 
-  final PooledInstanceProxy<T> instance;
+  final MemberProxy<T> instance;
   final int isolateIndex;
 
-  PooledInstanceStatus state = PooledInstanceStatus.starting;
+  WorkgroupMemberStatus state = WorkgroupMemberStatus.starting;
 
   @override
   String toString() {
@@ -135,24 +135,24 @@ class PooledIsolateParams {
 }
 
 /// Internal representation of a job
-class PooledJobRequest<T> {
-  const PooledJobRequest(this.job, this.jobIndex, this.isolateIndex, {this.started = false});
+class WorkgroupJobRequest<T> {
+  const WorkgroupJobRequest(this.job, this.jobIndex, this.isolateIndex, {this.started = false});
 
   final int isolateIndex;
-  final PooledJob<T> job;
+  final WorkgroupJob<T> job;
   final int jobIndex;
   final bool started;
 
   @override
   String toString() {
-    return 'PooledJobRequest(job: $job, jobIndex: $jobIndex, isolateIndex: $isolateIndex, started: $started)';
+    return 'WorkgroupJobRequest(job: $job, jobIndex: $jobIndex, isolateIndex: $isolateIndex, started: $started)';
   }
 
-  PooledJobRequest<T> copyWith({
+  WorkgroupJobRequest<T> copyWith({
     int? isolateIndex,
     bool? started,
   }) {
-    return PooledJobRequest(
+    return WorkgroupJobRequest(
       job,
       jobIndex,
       isolateIndex ?? this.isolateIndex,
@@ -162,8 +162,8 @@ class PooledJobRequest<T> {
 }
 
 /// Result of a job execution
-class PooledJobResult {
-  const PooledJobResult(
+class WorkgroupJobResult {
+  const WorkgroupJobResult(
     this.data,
     this.jobIndex,
     this.isolateIndex,
@@ -179,7 +179,7 @@ class PooledJobResult {
 
   @override
   String toString() {
-    return 'PooledJobResult(data: $data, jobIndex: $jobIndex, isolateIndex: $isolateIndex, error: $error, stackTrace: $stackTrace)';
+    return 'WorkgroupJobResult(data: $data, jobIndex: $jobIndex, isolateIndex: $isolateIndex, error: $error, stackTrace: $stackTrace)';
   }
 }
 
