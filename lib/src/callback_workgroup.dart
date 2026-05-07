@@ -8,25 +8,25 @@ import 'internal/messages.dart';
 ///
 /// Derive from this class to create isolate jobs that need to communicate with
 /// the main isolate during execution, for example to report progress.
-abstract class CallbackIsolateJob<R, A> {
+abstract class CallbackWorkgroupJob<R, A> {
   /// Whether the job should be executed synchronously or asynchronously.
   final bool synchronous;
 
-  /// Creates a new [CallbackIsolateJob].
+  /// Creates a new [CallbackWorkgroupJob].
   ///
-  /// Set [synchronous] to true to use [jobSync] instead of [jobAsync].
-  CallbackIsolateJob(this.synchronous);
+  /// Set [synchronous] to true to use [executeSync] instead of [executeAsync].
+  CallbackWorkgroupJob(this.synchronous);
 
   /// Asynchronous implementation of the job.
   /// Called when [synchronous] is false.
-  Future<R> jobAsync();
+  Future<R> executeAsync();
 
   /// Synchronous implementation of the job.
   /// Called when [synchronous] is true.
-  R jobSync();
+  R executeSync();
 
   /// Sends data back to the callback in the main isolate.
-  void sendDataToCallback(A arg) {
+  void report(A arg) {
     _sendPort?.send(IsolateCallbackArg<A>(arg));
   }
 
@@ -34,21 +34,21 @@ abstract class CallbackIsolateJob<R, A> {
   SendPort? _errorPort;
 }
 
-/// Manages execution of a [CallbackIsolateJob] in a dedicated isolate.
+/// Manages execution of a [CallbackWorkgroupJob] in a dedicated isolate.
 ///
-/// This class allows spawning a new isolate with a [CallbackIsolateJob]
-/// without using an [IsolatePool].
-class CallbackIsolate<R, A> {
+/// This class allows spawning a new isolate with a [CallbackWorkgroupJob]
+/// without using an [IsolateWorkgroup].
+class CallbackWorkgroup<R, A> {
   /// The job to execute in the isolate.
-  final CallbackIsolateJob<R, A> job;
+  final CallbackWorkgroupJob<R, A> job;
 
-  /// Creates a new [CallbackIsolate] for the given [job].
-  const CallbackIsolate(this.job);
+  /// Creates a new [CallbackWorkgroup] for the given [job].
+  const CallbackWorkgroup(this.job);
 
   /// Executes the job in a new isolate.
   ///
   /// The [callback] will be called whenever the job sends data
-  /// using [CallbackIsolateJob.sendDataToCallback].
+  /// using [CallbackWorkgroupJob.report].
   ///
   /// If [onError] is provided, it will be called for any errors that occur
   /// during job execution. Otherwise, errors are propagated to the returned Future.
@@ -73,7 +73,7 @@ class CallbackIsolate<R, A> {
     Timer? timeoutTimer;
 
     try {
-      isolateInstance = await Isolate.spawn<CallbackIsolateJob<R, A>>(
+      isolateInstance = await Isolate.spawn<CallbackWorkgroupJob<R, A>>(
         _isolateBody,
         job,
         errorsAreFatal: errorsAreFatal,
@@ -85,7 +85,7 @@ class CallbackIsolate<R, A> {
       if (timeout != null) {
         timeoutTimer = Timer(timeout, () {
           if (!completer.isCompleted) {
-            final error = IsolateTimeoutException(
+            final error = WorkgroupTimeoutException(
                 'job execution', timeout.inMilliseconds, 'Job execution timed out after ${timeout.inMilliseconds} ms', StackTrace.current);
 
             if (onError != null) {
@@ -112,7 +112,7 @@ class CallbackIsolate<R, A> {
             receivePort.close();
             errorPort.close();
           }
-        } else if (data is _CallbackIsolateError) {
+        } else if (data is _CallbackWorkgroupError) {
           if (!completer.isCompleted) {
             final error = data.error;
             final stackTrace = data.stackTrace;
@@ -133,7 +133,7 @@ class CallbackIsolate<R, A> {
 
       errorPort.listen((e) {
         if (!completer.isCompleted) {
-          if (e is _CallbackIsolateError) {
+          if (e is _CallbackWorkgroupError) {
             final error = e.error;
             final stackTrace = e.stackTrace;
 
@@ -179,19 +179,19 @@ class CallbackIsolate<R, A> {
   }
 }
 
-class _CallbackIsolateError {
+class _CallbackWorkgroupError {
   final Object error;
   final StackTrace stackTrace;
 
-  _CallbackIsolateError(this.error, this.stackTrace);
+  _CallbackWorkgroupError(this.error, this.stackTrace);
 }
 
-void _isolateBody(CallbackIsolateJob job) async {
+void _isolateBody(CallbackWorkgroupJob job) async {
   try {
-    final result = job.synchronous ? job.jobSync() : await job.jobAsync();
+    final result = job.synchronous ? job.executeSync() : await job.executeAsync();
     job._sendPort!.send(result);
   } catch (e, st) {
-    job._errorPort!.send(_CallbackIsolateError(e, st));
+    job._errorPort!.send(_CallbackWorkgroupError(e, st));
   }
 }
 
