@@ -213,23 +213,13 @@ void main() {
       },
     );
 
-    test(
-      'after shutdown throws WorkgroupException '
-      '(observed-and-locked: shutdown doesn\'t clear _pooledInstances, '
-      'so destroyInstance walks past the early-out and hits a null sendPort)',
-      () async {
-        final proxy = await wg.addInstance(EchoMember(), isolateIndex: 0);
-        wg.shutdown();
-        expect(
-          () => wg.destroyInstance(proxy),
-          throwsA(isA<WorkgroupException>().having(
-            (e) => e.message,
-            'message',
-            contains('SendPort is null'),
-          )),
-        );
-      },
-    );
+    test('after shutdown is silently safe (no throw)', () async {
+      final proxy = await wg.addInstance(EchoMember(), isolateIndex: 0);
+      wg.shutdown();
+      // shutdown clears _pooledInstances, so destroyInstance hits the
+      // already-destroyed early-out path and returns silently.
+      wg.destroyInstance(proxy);
+    });
   });
 
   group('invoke', () {

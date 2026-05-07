@@ -347,7 +347,17 @@ class IsolateWorkgroup {
     _jobCompleters[jobIndex] = completer;
     _jobs[jobIndex] = WorkgroupJobRequest<T>(job, jobIndex, isolateIndex);
 
-    _runJobWithVacantIsolate();
+    try {
+      _runJobWithVacantIsolate();
+    } catch (_) {
+      // _runJobWithVacantIsolate can throw synchronously (e.g. 0-isolate
+      // workgroup, all isolates killed). Clean up the orphan completer
+      // before rethrowing so it can't generate an unhandled async error
+      // later (e.g. when shutdown sweeps _jobCompleters).
+      _jobCompleters.remove(jobIndex);
+      _jobs.remove(jobIndex);
+      rethrow;
+    }
 
     return completer.future;
   }
@@ -533,44 +543,70 @@ class IsolateWorkgroup {
   /// All isolates are killed, and pending jobs and requests are cancelled.
   /// After calling this method, the workgroup cannot be restarted.
   void shutdown() {
+    // 1. Kill each isolate.
     for (final isolate in _isolates.values) {
       isolate.kill();
-
-      for (final completer in _jobCompleters.values) {
-        if (!completer.isCompleted) {
-          completer.completeError(WorkgroupJobAbortedException('Workgroup shut down upon request, cancelling jobs'));
-        }
-      }
-      _jobCompleters.clear();
-
-      for (final completer in _creationCompleters.values) {
-        if (!completer.isCompleted) {
-          completer.completeError(
-            WorkgroupJobAbortedException(
-              'Workgroup shut down upon request, cancelling instance creation requests',
-            ),
-          );
-        }
-      }
-      _creationCompleters.clear();
-
-      for (final completer in _requestCompleters.values) {
-        if (!completer.isCompleted) {
-          completer.completeError(WorkgroupJobAbortedException(
-            'Workgroup shut down upon request, cancelling pending request',
-          ));
-        }
-      }
-      _requestCompleters.clear();
-
-      for (final receivePort in _mainReceivePorts.values) {
-        receivePort.close();
-      }
     }
 
+    // 2. Fail any in-flight futures.
+    for (final completer in _jobCompleters.values) {
+      if (!completer.isCompleted) {
+        completer.completeError(
+          WorkgroupJobAbortedException(
+            'Workgroup shut down upon request, cancelling jobs',
+          ),
+        );
+      }
+    }
+    _jobCompleters.clear();
+    _jobs.clear();
+
+    for (final completer in _creationCompleters.values) {
+      if (!completer.isCompleted) {
+        completer.completeError(
+          WorkgroupJobAbortedException(
+            'Workgroup shut down upon request, cancelling instance creation requests',
+          ),
+        );
+      }
+    }
+    _creationCompleters.clear();
+
+    for (final completer in _requestCompleters.values) {
+      if (!completer.isCompleted) {
+        completer.completeError(
+          WorkgroupJobAbortedException(
+            'Workgroup shut down upon request, cancelling pending request',
+          ),
+        );
+      }
+    }
+    _requestCompleters.clear();
+    _requestToInstance.clear();
+
+    // 3. Close ALL receive ports — main *and* error. Leaving any of
+    // these alive keeps the Dart event loop alive and prevents process
+    // exit, manifesting as the documented `~25 s` hang on subprocess shutdown.
+    for (final port in _mainReceivePorts.values) {
+      port.close();
+    }
+    for (final port in _poolErrorReceivePorts.values) {
+      port.close();
+    }
+
+    // 4. Clear all bookkeeping.
     _mainReceivePorts.clear();
+    _mainReceivePortsStreams.clear();
     _workerToMainSendPorts.clear();
     _mainToWorkerSendPorts.clear();
+    _poolErrorReceivePorts.clear();
+    _poolErrorReceivePortsStreams.clear();
+    _poolErrorSendPorts.clear();
+    _pooledInstances.clear();
+    _isolateHealth.clear();
+    _isolateBusyWithJob.clear();
+    _isolates.clear();
+
     _state = WorkgroupState.disposed;
   }
 
