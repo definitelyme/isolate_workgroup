@@ -1,66 +1,51 @@
-/// Base exception class for all isolate pool related exceptions.
-class IsolatePoolException implements Exception {
-  /// Error message describing the exception.
+/// Base exception for all isolate workgroup errors.
+class WorkgroupException implements Exception {
   final String message;
-
-  /// Stack trace of the exception, if available.
   final StackTrace? stackTrace;
 
-  /// Creates a new [IsolatePoolException] with the given [message].
-  const IsolatePoolException(this.message, [this.stackTrace]);
+  const WorkgroupException(this.message, [this.stackTrace]);
 
   @override
   String toString() {
-    final msg = switch (stackTrace) {
-      _ when stackTrace != StackTrace.empty => '$message\n$stackTrace',
-      _ => message,
-    };
-
-    return msg;
+    if (stackTrace != null && stackTrace != StackTrace.empty) {
+      return '$message\n$stackTrace';
+    }
+    return message;
   }
 }
 
-/// Thrown when attempting to use a non-existent isolate instance.
-class NoSuchIsolateInstanceException extends IsolatePoolException {
-  const NoSuchIsolateInstanceException(super.message, [super.stackTrace]);
+/// Thrown when referencing a member that does not exist.
+class WorkgroupMemberNotFoundException extends WorkgroupException {
+  const WorkgroupMemberNotFoundException(super.message, [super.stackTrace]);
 }
 
-/// Thrown when attempting to use a pool that has been stopped.
-class IsolatePoolStoppedException extends IsolatePoolException {
-  const IsolatePoolStoppedException(super.message, [super.stackTrace]);
+/// Thrown when attempting to use a workgroup that has been shut down.
+class WorkgroupInactiveException extends WorkgroupException {
+  const WorkgroupInactiveException(super.message, [super.stackTrace]);
 }
 
-/// Thrown when jobs are cancelled due to pool stoppage.
-class IsolatePoolJobCancelledException extends IsolatePoolException {
-  const IsolatePoolJobCancelledException(super.message, [super.stackTrace]);
+/// Thrown when in-flight jobs are cancelled because the workgroup was shut down.
+class WorkgroupJobAbortedException extends WorkgroupException {
+  const WorkgroupJobAbortedException(super.message, [super.stackTrace]);
 }
 
-/// Thrown when attempting to use an isolate instance that hasn't completed initialization.
-class IsolateNotYetStartedException extends IsolatePoolException {
-  const IsolateNotYetStartedException(super.message, [super.stackTrace]);
+/// Thrown when sending to a member that has not finished initializing.
+class WorkgroupNotReadyException extends WorkgroupException {
+  const WorkgroupNotReadyException(super.message, [super.stackTrace]);
 }
 
-/// Thrown when receiving an unexpected response from an isolate.
-class BadResponseReceivedException extends IsolatePoolException {
-  const BadResponseReceivedException(super.message, [super.stackTrace]);
+/// Thrown when an isolate sends back an unexpected message shape.
+class InvalidWorkgroupResponseException extends WorkgroupException {
+  const InvalidWorkgroupResponseException(super.message, [super.stackTrace]);
 }
 
-/// Encapsulates an error that occurred in an isolate.
-///
-/// This class is used to transport errors from isolates back to the main isolate
-/// with proper context and stack trace information.
-class IsolateError extends IsolatePoolException {
-  /// The original error object.
+/// Wraps an error that originated inside a worker isolate.
+class WorkgroupIsolateError extends WorkgroupException {
   final Object originalError;
-
-  /// The isolate index where the error occurred.
   final int isolateIndex;
-
-  /// Original stack trace from where the error occurred in the isolate
   final StackTrace originalStackTrace;
 
-  /// Creates a new [IsolateError] with the given [originalError].
-  const IsolateError(
+  const WorkgroupIsolateError(
     this.originalError,
     this.isolateIndex,
     String message, [
@@ -69,45 +54,34 @@ class IsolateError extends IsolatePoolException {
 
   @override
   String toString() {
-    final msg = switch (originalStackTrace) {
-      _ when originalStackTrace != StackTrace.empty => '$message\n$originalStackTrace',
-      _ => message,
-    };
-
-    return 'Error in isolate #$isolateIndex: $msg';
+    if (originalStackTrace != StackTrace.empty) {
+      return 'Error in isolate #$isolateIndex: $message\n$originalStackTrace';
+    }
+    return 'Error in isolate #$isolateIndex: $message';
   }
 
-  /// Returns the original error unwrapped.
-  /// This is useful for catching the error in the main isolate with its original type.
   Object get unwrappedError => originalError;
 
-  /// Creates a copy of this error but with a combined stack trace.
-  /// The combined stack trace includes both the original isolate stack trace
-  /// and the main isolate stack trace where the error was caught.
-  IsolateError withCombinedStackTrace(StackTrace mainStackTrace) {
-    final combinedStack = _combineStackTraces(originalStackTrace, mainStackTrace);
-    return IsolateError(originalError, isolateIndex, message, combinedStack);
+  WorkgroupIsolateError withCombinedStackTrace(StackTrace mainStackTrace) {
+    final combined = _combineStackTraces(originalStackTrace, mainStackTrace);
+    return WorkgroupIsolateError(originalError, isolateIndex, message, combined);
   }
 
-  /// Combines two stack traces into one, showing both where the error originated
-  /// in the isolate and where it was caught in the main isolate.
   static StackTrace _combineStackTraces(StackTrace original, StackTrace main) {
-    final originalString = original.toString();
-    final mainString = main.toString();
-
-    return StackTrace.fromString('=== Stack trace in isolate (where error originated) ===\n'
-        '$originalString\n'
-        '=== Stack trace in main isolate (where error was caught) ===\n'
-        '$mainString');
+    return StackTrace.fromString(
+      '=== Stack trace in isolate (where error originated) ===\n'
+      '$original\n'
+      '=== Stack trace in main isolate (where error was caught) ===\n'
+      '$main',
+    );
   }
 }
 
-/// Thrown when an error occurs during initialization of an isolate.
-class IsolateInitializationException extends IsolatePoolException {
-  /// The isolate index that failed to initialize.
+/// Thrown when a worker isolate fails to complete its setup phase.
+class WorkgroupSetupException extends WorkgroupException {
   final int isolateIndex;
 
-  const IsolateInitializationException(
+  const WorkgroupSetupException(
     this.isolateIndex,
     super.message, [
     super.stackTrace,
@@ -115,23 +89,19 @@ class IsolateInitializationException extends IsolatePoolException {
 
   @override
   String toString() {
-    final msg = switch (stackTrace) {
-      _ when stackTrace != StackTrace.empty => '$message\n$stackTrace',
-      _ => message,
-    };
-
-    return 'Failed to initialize isolate #$isolateIndex: $msg';
+    if (stackTrace != null && stackTrace != StackTrace.empty) {
+      return 'Failed to initialize isolate #$isolateIndex: $message\n$stackTrace';
+    }
+    return 'Failed to initialize isolate #$isolateIndex: $message';
   }
 }
 
-/// Thrown when a timeout occurs while waiting for an isolate operation.
-class IsolateTimeoutException extends IsolatePoolException {
+/// Thrown when an isolate operation exceeds its time budget.
+class WorkgroupTimeoutException extends WorkgroupException {
   final String operation;
-
-  /// The timeout duration in milliseconds.
   final int timeoutMs;
 
-  const IsolateTimeoutException(
+  const WorkgroupTimeoutException(
     this.operation,
     this.timeoutMs,
     super.message, [
@@ -140,24 +110,18 @@ class IsolateTimeoutException extends IsolatePoolException {
 
   @override
   String toString() {
-    final msg = switch (stackTrace) {
-      _ when stackTrace != StackTrace.empty => '$message\n$stackTrace',
-      _ => message,
-    };
-
-    return '$operation timed out after $timeoutMs ms: $msg';
+    if (stackTrace != null && stackTrace != StackTrace.empty) {
+      return '$operation timed out after $timeoutMs ms: $message\n$stackTrace';
+    }
+    return '$operation timed out after $timeoutMs ms: $message';
   }
 }
 
-/// Thrown when an isolate is detected as dead or unresponsive.
-///
-/// This exception is thrown when health checks fail or when an isolate
-/// does not respond to ping requests within the configured timeout.
-class IsolateDeadException extends IsolatePoolException {
-  /// The isolate index that is dead or unresponsive.
+/// Thrown when a worker isolate fails health checks and is unresponsive.
+class WorkgroupMemberDeadException extends WorkgroupException {
   final int isolateIndex;
 
-  const IsolateDeadException(
+  const WorkgroupMemberDeadException(
     this.isolateIndex,
     super.message, [
     super.stackTrace,
@@ -165,11 +129,9 @@ class IsolateDeadException extends IsolatePoolException {
 
   @override
   String toString() {
-    final msg = switch (stackTrace) {
-      _ when stackTrace != StackTrace.empty => '$message\n$stackTrace',
-      _ => message,
-    };
-
-    return 'Isolate #$isolateIndex is dead or unresponsive: $msg';
+    if (stackTrace != null && stackTrace != StackTrace.empty) {
+      return 'Isolate #$isolateIndex is dead or unresponsive: $message\n$stackTrace';
+    }
+    return 'Isolate #$isolateIndex is dead or unresponsive: $message';
   }
 }
