@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/isolate_pool.iml" filepath="$PROJECT_DIR$/isolate_pool.iml" />
+      <module fileurl="file://$PROJECT_DIR$/isolate_workgroup.iml" filepath="$PROJECT_DIR$/isolate_workgroup.iml" />
     </modules>
   </component>
 </project>
