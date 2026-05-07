@@ -178,8 +178,6 @@ void main() {
       'dispatch throws WorkgroupException synchronously '
       '(observed-and-locked: no send ports available)',
       () async {
-        // This test asserts what IS, not what should be — current behavior
-        // is documented in spec §7.2.
         final wg = IsolateWorkgroup(0);
         await wg.launch();
         expect(
@@ -191,6 +189,32 @@ void main() {
           )),
         );
         wg.shutdown();
+      },
+    );
+
+    test(
+      'sync dispatch throw does NOT leak an orphan completer '
+      '(regression — previously caused unhandled async error on shutdown)',
+      () async {
+        // Wrap in a runZonedGuarded zone so we can detect any unhandled
+        // async error that would otherwise be reported globally.
+        final uncaught = <Object>[];
+        await runZonedGuarded(() async {
+          final wg = IsolateWorkgroup(0);
+          await wg.launch();
+          // Synchronous throw — orphan completer must be cleaned up.
+          try {
+            wg.dispatch(EchoJob<int>(1));
+          } catch (_) {/* expected */}
+          wg.shutdown();
+          // Allow any pending microtasks to drain.
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+        }, (e, _) => uncaught.add(e));
+
+        expect(uncaught, isEmpty,
+            reason:
+                'sync-throw dispatch must not leak a completer that gets '
+                'errored later by shutdown');
       },
     );
   });
