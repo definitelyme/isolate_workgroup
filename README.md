@@ -1,143 +1,210 @@
 # Isolate Workgroup
 
-A library for managing isolates in a workgroup for parallel processing in Dart applications.
+<p align="center">
+  <img src="assets/isolate_workgroup_hero.gif" alt="Animation: IsolateWorkgroup dispatching 100 jobs across 4 worker isolates in parallel" width="100%">
+</p>
 
-This library provides a simple API for creating and managing a workgroup of isolates,
-scheduling one-off jobs, and creating persistent members in isolates.
+<p align="center">
+  <a href="https://pub.dev/packages/isolate_workgroup"><img src="https://img.shields.io/pub/v/isolate_workgroup.svg" alt="pub package"></a>
+  <a href="https://dart.dev"><img src="https://img.shields.io/badge/Dart-3.0+-blue.svg" alt="Dart 3.0+"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-BSD--3--Clause-green.svg" alt="license: BSD-3-Clause"></a>
+</p>
+
+A dynamic pool of worker isolates for parallel processing in Dart — with
+one-off jobs, persistent stateful members, runtime resizing, and
+health-aware dispatch.
 
 ## Features
 
-- Create and manage a workgroup of isolates
-- Schedule one-off jobs to be executed in the workgroup
-- Create persistent members in isolates for stateful processing
-- Communication between main isolate and worker isolates
-- Support for progress reporting from worker isolates
+- **One-off jobs** via `dispatch()` — submit work, await a result.
+  Like Flutter's `compute()` but without spawning a fresh isolate per call.
+- **Persistent stateful members** via `addInstance()` + `MemberProxy.invoke()` —
+  keep state (caches, open connections, etc.) inside a worker across many calls.
+- **Progress callbacks** via `CallbackWorkgroup` —
+  stream incremental updates from a long-running job.
+- **Dynamic resizing** via `addIsolate()` and `kill()` —
+  grow or shrink the workgroup at runtime; indices remain stable.
+- **Health-aware** — built-in `probe()` and configurable
+  `WorkgroupHealthConfig` (`disabled` / `aggressive` / `relaxed`).
+- **Typed error routing** via `setErrorHandler(IsolateErrorType.…)` —
+  separate channels for `job`, `instance`, `initialization`, `communication`,
+  and a catch-all `all`.
 
-## Usage
+## How it works
 
-### Basic Usage
+<p align="center">
+  <img src="assets/isolate_workgroup.gif" alt="Animation: parse, hash, and render jobs flowing from the main isolate through IsolateWorkgroup to three workers" width="100%">
+</p>
 
-The workgroup can accept one-time requests (workgroup jobs) mimicking Flutter's `compute()` method. But instead of spawning a new isolate each time it will use one of the available active isolates from the workgroup. In order to do so you need to inherit `WorkgroupJob` class, define whatever params are needed as class fields, override the `execute()` method that will be executed on a workgroup isolate. Use `IsolateWorkgroup.dispatch()` and pass an instance of a workgroup job in order to get it transferred to another isolate, executed and result returned.
+The main isolate creates an `IsolateWorkgroup`. Jobs and members are
+sent over `SendPort`s to whichever worker is free; results flow back
+over the workers' return ports. For `WorkgroupMember`s, state stays
+inside the worker, so subsequent calls hit a warm cache instead of
+re-paying serialization costs.
+
+## Quick start
+
+```yaml
+dependencies:
+  isolate_workgroup: ^1.0.0
+```
 
 ```dart
 import 'package:isolate_workgroup/isolate_workgroup.dart';
 
 void main() async {
-  // Create a workgroup with 4 worker isolates
-  final workgroup = IsolateWorkgroup(4);
+  final wg = IsolateWorkgroup(4);
+  await wg.launch();
 
-  // Start the workgroup
-  await workgroup.launch();
+  final result = await wg.dispatch(MyJob());
+  print(result);
 
-  // Dispatch a job
-  final result = await workgroup.dispatch(MyJob());
-
-  // Shut the workgroup down when done
-  workgroup.shutdown();
+  wg.shutdown();
 }
 
-// Define a job
 class MyJob extends WorkgroupJob<String> {
   @override
-  Future<String> execute() async {
-    // Perform work in isolate
-    return 'Result from isolate';
-  }
+  Future<String> execute() async => 'hello from a worker isolate';
 }
 ```
 
-### Persistent Members
+## API at a glance
 
-The second way of using the APIs is to have a member created in one of the workgroup isolates and communicate with it via a proxy instance. It is kind of messaging from the main isolate to one of the isolates in a workgroup with multiple members created in multiple isolates, messages and responses properly correlated and arranged via descendants of `WorkerCommand`. You can wrap `MemberProxy` in a class and mimic RPC kind of communication with `WorkgroupMember` in external isolate.
+<p align="center">
+  <img src="assets/api-cheatsheet.svg" alt="Three-column API cheatsheet: WorkgroupJob for one-off jobs, WorkgroupMember for stateful workers, CallbackWorkgroup for progress reporting" width="100%">
+</p>
+
+## Usage
+
+### Run a one-off job
+
+The workgroup accepts one-time requests (`WorkgroupJob`s) much like
+Flutter's `compute()`, but reuses an existing worker from the pool
+instead of spawning a fresh isolate. Subclass `WorkgroupJob`, declare
+sendable fields, override `execute()`, and pass an instance to
+`IsolateWorkgroup.dispatch()`.
 
 ```dart
 import 'package:isolate_workgroup/isolate_workgroup.dart';
 
-void main() async {
-  final workgroup = IsolateWorkgroup(4);
-  await workgroup.launch();
-  
-  // Create a persistent member
-  final proxy = await workgroup.addInstance(MyMember());
-  
-  // Call methods on the member
-  final result = await proxy.invoke(MyAction('parameter'));
-  
-  workgroup.shutdown();
+class ParseCsv extends WorkgroupJob<List<Row>> {
+  final String csv;
+  ParseCsv(this.csv);
+
+  @override
+  Future<List<Row>> execute() async => parser.decode(csv);
 }
 
-// Define a member
-class MyMember extends WorkgroupMember {
+void main() async {
+  final wg = IsolateWorkgroup(4);
+  await wg.launch();
+
+  final rows = await wg.dispatch(ParseCsv(raw));
+
+  wg.shutdown();
+}
+```
+
+### Hold state with a member
+
+Create a `WorkgroupMember` to keep state inside a worker (a cache,
+a database handle, an open socket). The main isolate gets back a
+`MemberProxy` and calls `invoke()` with `WorkerCommand` descendants —
+RPC-style messaging to the worker. Members are correlated by ID, so
+many in-flight calls to the same member are demultiplexed
+automatically.
+
+```dart
+import 'package:isolate_workgroup/isolate_workgroup.dart';
+
+class FetchProfile extends WorkerCommand {
+  final String userId;
+  FetchProfile(this.userId);
+}
+
+class ProfileCache extends WorkgroupMember {
+  final Map<String, Profile> _cache = {};
+
   @override
-  Future<void> setup() async {
-    // Initialize resources, load data, etc.
-  }
-  
+  Future<void> setup() async { /* warm DB, open files, etc. */ }
+
   @override
-  Future<dynamic> handle(WorkerCommand action) async {
-    if (action is MyAction) {
-      return 'Processed: ${action.parameter}';
+  Future<dynamic> handle(WorkerCommand cmd) async {
+    if (cmd is FetchProfile) {
+      return _cache.putIfAbsent(cmd.userId, () => fetch(cmd.userId));
     }
     return null;
   }
 }
 
-// Define actions
-class MyAction extends WorkerCommand {
-  final String parameter;
-  
-  MyAction(this.parameter);
+void main() async {
+  final wg = IsolateWorkgroup(4);
+  await wg.launch();
+
+  final proxy = await wg.addInstance(ProfileCache());
+  final p1 = await proxy.invoke<Profile>(FetchProfile('u_1'));
+  final p2 = await proxy.invoke<Profile>(FetchProfile('u_1')); // cache hit
+
+  wg.destroyInstance(proxy);
+  wg.shutdown();
 }
 ```
 
-#### WorkgroupMember Architecture Overview
+### Stream progress with `CallbackWorkgroup`
+
+For long-running jobs that need to report progress, use
+`CallbackWorkgroup`. Override `executeAsync()` (or `executeSync()`),
+call `report(arg)` from inside the worker, and pass a callback to
+`run()`.
 
 ```dart
-                                                           │
-                        Main isolate                       │  Isolate in the workgroup
-                                                           │
-                        ┌─────────────────────────────┐    │
-Step 1 - Instantiate    │                             │    │     Workgroup member with params
-a descendant of         │  WorkgroupMember            │    │     is passed to isolate within
-WorkgroupMember         │                             │    │     the workgroup. setup() method is
-                        │    - Params                 │    │     called initializing whatever
-                        │                             │    │     fields necessary and creating
-                        └──────────────┬──────────────┘    │     whatever objects required
-                                       │                   │     (aka State)
-                                   Passed to               │
-                                       │                   │   ┌─────────────────────────────┐
-                                       │                   │   │                             │
-                        ┌──────────────┼──────────────┐    │   │  WorkgroupMember            │
-Step 2 - Pass the       │              │              │    │   │                             │
-WorkgroupMember to      │  IsolateWorkgroup            │    │   │    - Params                 │
-isolate workgroup, it   │              ▼         ┌────┼────┼───►        ▼                    │
-will transfer the       │    - addInstance()──┘    │    │   │    - setup()──┐             │
-object (together with   │                             │    │   │               │             │
-fields) to isolate and  └──────────────┬──────────────┘    │   │    - State ◄──┘             │
-call setup(). Returned                 │                   │   │                             │
-                                    Returns                │   │    - handle()               │
-                                       │                   │   │              ▲              │
-                                       │                   │   └──────────────┬──────────────┘
-                        ┌──────────────▼──────────────┐    │                  │
-Step 3 - use returned   │                             │    │                  │
-MemberProxy             │  MemberProxy                │    │                  │
-which can be used to    │                             │    │
-pass actions to the     │    - invoke() ◄─────────────┼────┼──────────────────┘
-member in the workgroup │                             │    │
-                        └──────────────▲──────────────┘    │
-                                       │                   │      WorkerCommand descendants are
-                                       │                   │      passed to isolates via proxy
-                                       │                   │      instance in the main isolate.
-                                       │                   │      Workgroup member uses switch
-                        ┌──────────────┴──────────────┐    │      statement in handle()
-Create a set of         │                             │    │      processing requests and returning
-WorkerCommand           │  WorkerCommand              │    │      results back to the requester
-descendants             │                             │    │
-defining workgroup      │    - Params                 │    │
-member capabilities,    │                             │    │
-use them with           └─────────────────────────────┘    │
-invoke()                                                   │
+import 'package:isolate_workgroup/isolate_workgroup.dart';
+
+class CompressFile extends CallbackWorkgroupJob<File, int> {
+  final File input;
+  CompressFile(this.input) : super(false);
+
+  @override
+  Future<File> executeAsync() async {
+    final out = File('${input.path}.gz');
+    final total = input.lengthSync();
+    var done = 0;
+    await for (final chunk in input.openRead()) {
+      out.writeAsBytesSync(gzip(chunk), mode: FileMode.append);
+      done += chunk.length;
+      report(((done / total) * 100).round());
+    }
+    return out;
+  }
+
+  @override
+  File executeSync() => throw UnimplementedError();
+}
+
+final compressed = await CallbackWorkgroup(CompressFile(big))
+    .run((percent) => print('$percent%'));
 ```
+
+## Architecture
+
+<p align="center">
+  <img src="assets/architecture.png" alt="Architecture diagram: main isolate, four worker isolates, dispatch / addInstance / kill / addIsolate operations, and the SendPort + ReceivePort communication channels" width="100%">
+</p>
+
+The main isolate holds the `IsolateWorkgroup`. Each worker has three
+ports: a *main → worker* `SendPort`, a *worker → main* `SendPort`, and
+an *error* `ReceivePort` that surfaces uncaught failures back to your
+registered handler. `dispatch()` fans jobs out to whichever worker is
+free; `addInstance()` load-balances members onto the worker with the
+fewest residents. `kill(i)` and `addIsolate()` resize the pool at
+runtime without changing the indices of surviving workers.
+
+## Best practices
+
+See [BEST_PRACTICES.md](BEST_PRACTICES.md) for guidance on:
+sizing the workgroup, choosing between `dispatch()` and `addInstance()`,
+designing sendable payloads, avoiding closure-capture pitfalls, error
+handling, when to enable health checking, and large binary transfers.
 
 ## License
 
@@ -145,5 +212,5 @@ BSD 3-Clause. See [`LICENSE`](LICENSE) for the full text.
 
 ## Contributing
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md) for setup, workflow, and code-style
-guidelines.
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for setup, workflow, and
+code-style guidelines.
