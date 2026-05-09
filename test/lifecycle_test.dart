@@ -212,8 +212,7 @@ void main() {
         }, (e, _) => uncaught.add(e));
 
         expect(uncaught, isEmpty,
-            reason:
-                'sync-throw dispatch must not leak a completer that gets '
+            reason: 'sync-throw dispatch must not leak a completer that gets '
                 'errored later by shutdown');
       },
     );
@@ -315,19 +314,23 @@ void main() {
         await wg.launch();
 
         final keys = wg.errorReceivePortsStreamsMap.keys.toSet();
-        expect(keys, containsAll([
-          'custom_worker_0',
-          'custom_worker_1',
-          'custom_worker_2',
-        ]));
+        expect(
+            keys,
+            containsAll([
+              'custom_worker_0',
+              'custom_worker_1',
+              'custom_worker_2',
+            ]));
 
         // receivePortsStreamsMap uses the same debug names.
         final mainKeys = wg.receivePortsStreamsMap.keys.toSet();
-        expect(mainKeys, containsAll([
-          'custom_worker_0',
-          'custom_worker_1',
-          'custom_worker_2',
-        ]));
+        expect(
+            mainKeys,
+            containsAll([
+              'custom_worker_0',
+              'custom_worker_1',
+              'custom_worker_2',
+            ]));
 
         wg.shutdown();
       },

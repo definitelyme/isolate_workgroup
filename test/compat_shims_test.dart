@@ -75,8 +75,7 @@ void main() {
       () async {
         // Mirrors dexter app's calling convention: route a member's call to
         // a different isolate by passing `isolate:`.
-        final proxy =
-            await wg.addInstance(_ShimMember(), isolateIndex: 0);
+        final proxy = await wg.addInstance(_ShimMember(), isolateIndex: 0);
         // Call with isolate: 1 — instance doesn't exist there, so the
         // routing attempt fails. The point of this test is that the shim
         // forwards the parameter — both call sites must produce the same
@@ -89,8 +88,7 @@ void main() {
         }
         Object? shimError;
         try {
-          await proxy
-              .callRemoteMethod<String>(EchoCommand<int>(1), isolate: 1);
+          await proxy.callRemoteMethod<String>(EchoCommand<int>(1), isolate: 1);
         } catch (e) {
           shimError = e;
         }

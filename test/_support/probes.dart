@@ -15,7 +15,8 @@ import 'package:test/test.dart';
 void expectAllStateMapsEmpty(IsolateWorkgroup wg) {
   expect(wg.pendingCount, 0, reason: 'pendingCount should be 0');
   expect(wg.memberCount, 0, reason: 'memberCount should be 0');
-  expect(wg.requestCompleters, isEmpty, reason: 'requestCompleters should be empty');
+  expect(wg.requestCompleters, isEmpty,
+      reason: 'requestCompleters should be empty');
   expect(wg.members, isEmpty, reason: 'members should be empty');
 }
 
@@ -28,7 +29,8 @@ void expectIsolatePortsRemoved(IsolateWorkgroup wg, int isolateIndex) {
   expect(
     receivePortKeys,
     isEmpty,
-    reason: 'receivePortsStreamsMap should not contain ports for killed isolate $isolateIndex (found: $receivePortKeys)',
+    reason:
+        'receivePortsStreamsMap should not contain ports for killed isolate $isolateIndex (found: $receivePortKeys)',
   );
 
   final errorPortKeys = wg.errorReceivePortsStreamsMap.keys
@@ -37,7 +39,8 @@ void expectIsolatePortsRemoved(IsolateWorkgroup wg, int isolateIndex) {
   expect(
     errorPortKeys,
     isEmpty,
-    reason: 'errorReceivePortsStreamsMap should not contain ports for killed isolate $isolateIndex (found: $errorPortKeys)',
+    reason:
+        'errorReceivePortsStreamsMap should not contain ports for killed isolate $isolateIndex (found: $errorPortKeys)',
   );
 
   final w2mKeys = wg.workerToMainSendPorts.keys
@@ -46,13 +49,15 @@ void expectIsolatePortsRemoved(IsolateWorkgroup wg, int isolateIndex) {
   expect(
     w2mKeys,
     isEmpty,
-    reason: 'workerToMainSendPorts should not contain entries for killed isolate $isolateIndex (found: $w2mKeys)',
+    reason:
+        'workerToMainSendPorts should not contain entries for killed isolate $isolateIndex (found: $w2mKeys)',
   );
 
   expect(
     wg.mainToWorkerSendPorts.containsKey(isolateIndex),
     isFalse,
-    reason: 'mainToWorkerSendPorts should not contain killed index $isolateIndex',
+    reason:
+        'mainToWorkerSendPorts should not contain killed index $isolateIndex',
   );
 }
 

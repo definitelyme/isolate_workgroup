@@ -58,8 +58,7 @@ void main() {
           throwsA(isA<Exception>()),
         );
         await Future<void>.delayed(const Duration(milliseconds: 50));
-        expect(jobHits, isNotNull,
-            reason: 'specific .job handler must fire');
+        expect(jobHits, isNotNull, reason: 'specific .job handler must fire');
         expect(allHits, isNull,
             reason: '.all must NOT also fire when .job is registered');
 
@@ -231,8 +230,7 @@ void main() {
         wg.setErrorHandler(IsolateErrorType.all, (_) {});
         await wg.launch();
 
-        final err = await received.future
-            .timeout(const Duration(seconds: 3));
+        final err = await received.future.timeout(const Duration(seconds: 3));
 
         // Shape contract: List<String> of length 2 (spec §5).
         expect(err, isA<List>());

@@ -1,5 +1,6 @@
-/// Subprocess target for spec §7.15: addInstance + invoke + destroyInstance
-/// + shutdown.
+// Subprocess target for spec §7.15: addInstance + invoke +
+// destroyInstance + shutdown.
+
 import 'package:isolate_workgroup/isolate_workgroup.dart';
 
 class _Cmd extends WorkerCommand {}

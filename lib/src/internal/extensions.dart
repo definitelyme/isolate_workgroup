@@ -25,25 +25,30 @@ extension IsolateWorkgroupExtensions on IsolateWorkgroup {
   /// - The member is not yet started
   /// - The workgroup has been shut down
   /// - The specified worker index is invalid
-  Future<R> sendRequest<R>(int instanceId, WorkerCommand action, [int? isolateIndex]) async {
+  Future<R> sendRequest<R>(int instanceId, WorkerCommand action,
+      [int? isolateIndex]) async {
     isolateIndex ??= -1;
 
     if (state == WorkgroupState.disposed) {
-      throw WorkgroupInactiveException('Workgroup has been shut down, cannot send request');
+      throw WorkgroupInactiveException(
+          'Workgroup has been shut down, cannot send request');
     }
 
     if (!members.containsKey(instanceId)) {
-      throw WorkgroupMemberNotFoundException('Cannot send request to non-existing member, memberId $instanceId');
+      throw WorkgroupMemberNotFoundException(
+          'Cannot send request to non-existing member, memberId $instanceId');
     }
 
     final instance = members[instanceId]!;
 
     if (instance.state == WorkgroupMemberStatus.starting) {
-      throw WorkgroupNotReadyException('Cannot send request to instance in Starting state, instanceId $instanceId');
+      throw WorkgroupNotReadyException(
+          'Cannot send request to instance in Starting state, instanceId $instanceId');
     }
 
     // Use the specified isolate index if provided, otherwise use the instance's original isolate
-    final targetIsolate = (isolateIndex >= 0) ? isolateIndex : instance.isolateIndex;
+    final targetIsolate =
+        (isolateIndex >= 0) ? isolateIndex : instance.isolateIndex;
 
     // Validate the isolate index
     if (targetIsolate > mainToWorkerSendPorts.length - 1) {
@@ -54,7 +59,8 @@ extension IsolateWorkgroupExtensions on IsolateWorkgroup {
 
     // Warning: Cross-isolate call detection
     if (isolateIndex >= 0 && isolateIndex != instance.isolateIndex) {
-      print('⚠️ Warning: Attempting to call instance $instanceId on isolate $targetIsolate, '
+      print(
+          '⚠️ Warning: Attempting to call instance $instanceId on isolate $targetIsolate, '
           'but instance was created in isolate ${instance.isolateIndex}. '
           'This may fail if the instance does not exist in the target isolate.');
     }

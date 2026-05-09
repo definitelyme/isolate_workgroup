@@ -33,8 +33,7 @@ void main() {
     wg.shutdown();
   });
 
-  test('100 instances on 4 workers — distribution count delta ≤ 1',
-      () async {
+  test('100 instances on 4 workers — distribution count delta ≤ 1', () async {
     final wg = IsolateWorkgroup(4);
     await wg.launch();
 
@@ -175,13 +174,14 @@ void main() {
       }
       for (var i = 0; i < 5; i++) {
         ops.add(
-          wg.addInstance(EchoMember()).catchError((Object _) =>
-              MemberProxy<dynamic>(
-                memberId: -1,
-                workerIndex: -1,
-                workgroup: wg,
-                remoteCallback: null,
-              )),
+          wg
+              .addInstance(EchoMember())
+              .catchError((Object _) => MemberProxy<dynamic>(
+                    memberId: -1,
+                    workerIndex: -1,
+                    workgroup: wg,
+                    remoteCallback: null,
+                  )),
         );
       }
       // Kill one isolate mid-race.

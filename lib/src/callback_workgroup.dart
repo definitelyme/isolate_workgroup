@@ -86,7 +86,10 @@ class CallbackWorkgroup<R, A> {
         timeoutTimer = Timer(timeout, () {
           if (!completer.isCompleted) {
             final error = WorkgroupTimeoutException(
-                'job execution', timeout.inMilliseconds, 'Job execution timed out after ${timeout.inMilliseconds} ms', StackTrace.current);
+                'job execution',
+                timeout.inMilliseconds,
+                'Job execution timed out after ${timeout.inMilliseconds} ms',
+                StackTrace.current);
 
             if (onError != null) {
               onError(error, StackTrace.current);
@@ -139,7 +142,9 @@ class CallbackWorkgroup<R, A> {
 
             // Capture current stack trace from where the error is caught in main isolate
             final callerStackTrace = StackTrace.current;
-            final combinedStackTrace = combineStackTraces == true ? _combineStackTraces(stackTrace, callerStackTrace) : stackTrace;
+            final combinedStackTrace = combineStackTraces == true
+                ? _combineStackTraces(stackTrace, callerStackTrace)
+                : stackTrace;
 
             if (onError != null) {
               onError(error, combinedStackTrace);
@@ -188,7 +193,8 @@ class _CallbackWorkgroupError {
 
 void _isolateBody(CallbackWorkgroupJob job) async {
   try {
-    final result = job.synchronous ? job.executeSync() : await job.executeAsync();
+    final result =
+        job.synchronous ? job.executeSync() : await job.executeAsync();
     job._sendPort!.send(result);
   } catch (e, st) {
     job._errorPort!.send(_CallbackWorkgroupError(e, st));
@@ -200,7 +206,8 @@ StackTrace _combineStackTraces(StackTrace isolateStack, StackTrace mainStack) {
   final isolateString = isolateStack.toString();
   final mainString = mainStack.toString();
 
-  return StackTrace.fromString('=== Stack trace in isolate (where error originated) ===\n'
+  return StackTrace.fromString(
+      '=== Stack trace in isolate (where error originated) ===\n'
       '$isolateString\n'
       '=== Stack trace in main isolate (where error was caught) ===\n'
       '$mainString');

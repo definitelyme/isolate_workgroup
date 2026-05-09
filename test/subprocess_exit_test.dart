@@ -82,8 +82,7 @@ void main() {
         'exited=${result.exited}, elapsed=${result.elapsed.inMilliseconds}ms, '
         'exitCode=${result.exitCode}',
       );
-      expect(result.exited, isTrue,
-          reason: 'subprocess should exit, not hang');
+      expect(result.exited, isTrue, reason: 'subprocess should exit, not hang');
       expect(result.elapsed.inSeconds, lessThan(10),
           reason:
               'subprocess with members should exit < 10 s (got ${result.elapsed.inMilliseconds}ms)');
@@ -112,8 +111,7 @@ void main() {
       expect(
         result.exited,
         isTrue,
-        reason:
-            'example/example.dart did not exit within 30 s '
+        reason: 'example/example.dart did not exit within 30 s '
             '— documented `~25 s shutdown hang` reproduced. '
             'See docs/superpowers/possible-test-cases.txt §1.',
       );

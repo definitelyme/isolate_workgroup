@@ -170,7 +170,9 @@ void main() {
       expect(
         canBeSentToIsolate([
           {'a': 1, 'b': 2},
-          {'c': [3, 4]},
+          {
+            'c': [3, 4]
+          },
         ]),
         isTrue,
       );
@@ -183,7 +185,9 @@ void main() {
         expect(
           canBeSentToIsolate([
             {'a': 1},
-            {'b': [controller]},
+            {
+              'b': [controller]
+            },
           ]),
           isFalse,
         );
