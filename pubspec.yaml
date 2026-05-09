@@ -4,6 +4,17 @@ description: A Dart package for managing a dynamic group of isolates — support
   workgroup resizing.
 version: 1.0.0
 
+homepage: https://github.com/definitelyme/isolate_workgroup
+repository: https://github.com/definitelyme/isolate_workgroup
+issue_tracker: https://github.com/definitelyme/isolate_workgroup/issues
+
+topics:
+  - isolate
+  - concurrency
+  - parallel
+  - worker-pool
+  - compute
+
 environment:
   sdk: ">=3.0.0 <4.0.0"
 

@@ -1,0 +1,18 @@
+# Files committed to git but excluded from the published pub.dev archive.
+# README.md still renders correctly on pub.dev: it pulls images from the
+# GitHub raw URL via the `repository:` field in pubspec.yaml.
+
+# Visual assets — ~2.5MB. Loaded from GitHub by pub.dev's README renderer.
+assets/
+
+# Internal planning + spec docs — not user-facing.
+docs/
+
+# Test infrastructure config — not used at runtime.
+dart_test.yaml
+
+# IDE project file.
+isolate_workgroup.iml
+
+# Empty directory left over from earlier layout.
+lib/example/
