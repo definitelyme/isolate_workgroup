@@ -1,6 +1,13 @@
 # Files committed to git but excluded from the published pub.dev archive.
 # README.md still renders correctly on pub.dev: it pulls images from the
 # GitHub raw URL via the `repository:` field in pubspec.yaml.
+#
+# IMPORTANT: when a `.pubignore` is present, pub.dev STOPS respecting
+# `.gitignore` for the publish archive. So this file must explicitly
+# include everything we want pub to skip — both our custom exclusions
+# AND the patterns also listed in `.gitignore`.
+
+# --- our custom exclusions ---
 
 # Visual assets — ~2.5MB. Loaded from GitHub by pub.dev's README renderer.
 assets/
@@ -16,3 +23,41 @@ isolate_workgroup.iml
 
 # Empty directory left over from earlier layout.
 lib/example/
+
+# --- mirror of .gitignore (because .pubignore overrides it) ---
+
+# Test coverage artifacts — local dev only, often stale.
+coverage/
+
+# Pub / Dart tool caches.
+.dart_tool/
+.packages
+build/
+pubspec.lock
+
+# Generated dartdoc.
+doc/api/
+
+# dotenv environment variables file.
+.env*
+
+# Generated JavaScript files.
+*.dart.js
+*.info.json
+*.js
+*.js_
+*.js.deps
+*.js.map
+
+# Flutter plugin metadata.
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# Local tooling caches.
+.claude/
+
+# FVM Version Cache.
+.fvm/
+
+# macOS metadata.
+.DS_Store
