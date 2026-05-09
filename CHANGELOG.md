@@ -37,11 +37,4 @@ processing in Dart, forked and rebranded from [`isolate_pool_2`].
 - [`example/example.dart`](example/example.dart) — parallel reduce and
   stateful counter samples.
 
-### Tests
-
-- 199 tests across fast / slow / perf suites covering lifecycle,
-  dispatch, members, kill, addIsolate, validation, error handlers,
-  health, callback workgroup, init policy, concurrency stress, memory
-  leaks, subprocess exit, and informational benchmarks.
-
 [`isolate_pool_2`]: https://github.com/maxim-saplin/isolate_pool_2
