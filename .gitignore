@@ -34,3 +34,6 @@ docs/superpowers/
 
 # FVM Version Cache
 .fvm/
+
+# macOS metadata
+.DS_Store
