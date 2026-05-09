@@ -106,7 +106,8 @@ class IsolateWorkgroup {
   WorkgroupState _state = WorkgroupState.idle;
 
   /// Maps of Streams of error messages from each isolate, keyed by debug name.
-  Map<String, Stream<dynamic>> get errorReceivePortsStreamsMap => _workerErrorReceivePortsStreams;
+  Map<String, Stream<dynamic>> get errorReceivePortsStreamsMap =>
+      _workerErrorReceivePortsStreams;
 
   /// Gets health status information for all isolates.
   ///
@@ -163,7 +164,8 @@ class IsolateWorkgroup {
   Map<int, MemberEntry> get members => _members;
 
   /// Maps of Streams of messages from each isolate, keyed by debug name.
-  Map<String, Stream<dynamic>> get receivePortsStreamsMap => Map.from(_mainReceivePortsStreams);
+  Map<String, Stream<dynamic>> get receivePortsStreamsMap =>
+      Map.from(_mainReceivePortsStreams);
 
   /// Map of request completers, keyed by request ID.
   Map<int, Completer> get requestCompleters => _requestCompleters;
@@ -172,7 +174,8 @@ class IsolateWorkgroup {
   ///
   /// Can be used to directly send messages to these isolates.
   /// Send ports are guaranteed to be in the same order as the isolates.
-  List<SendPort> get sendPorts => _mainToWorkerSendPorts.values.whereType<SendPort>().toList();
+  List<SendPort> get sendPorts =>
+      _mainToWorkerSendPorts.values.whereType<SendPort>().toList();
 
   /// Future that completes when the workgroup has started.
   ///
@@ -200,7 +203,8 @@ class IsolateWorkgroup {
   /// - Initializing an isolate fails
   Future<void> launch() async {
     if (_state != WorkgroupState.idle) {
-      throw WorkgroupException('Workgroup has already been launched or shut down');
+      throw WorkgroupException(
+          'Workgroup has already been launched or shut down');
     }
 
     final init = _config.onSetup;
@@ -284,7 +288,8 @@ class IsolateWorkgroup {
 
       // Initialize health tracking for this isolate
       if (healthConfig.enabled) {
-        _isolateHealth.putIfAbsent(entry.key, () => WorkgroupHealthInfo._(isolateIndex: entry.key));
+        _isolateHealth.putIfAbsent(
+            entry.key, () => WorkgroupHealthInfo._(isolateIndex: entry.key));
       }
 
       // Resume only the first isolate for sequential initialization
@@ -296,7 +301,8 @@ class IsolateWorkgroup {
 
     spawnSw.stop();
 
-    print('spawn() called on $isolatesCount workers (${spawnSw.elapsedMicroseconds} microseconds)');
+    print(
+        'spawn() called on $isolatesCount workers (${spawnSw.elapsedMicroseconds} microseconds)');
 
     return last.future;
   }
@@ -324,7 +330,8 @@ class IsolateWorkgroup {
     isolateIndex ??= -1;
 
     if (state == WorkgroupState.disposed) {
-      throw WorkgroupInactiveException('Workgroup has been shut down, cannot dispatch a job');
+      throw WorkgroupInactiveException(
+          'Workgroup has been shut down, cannot dispatch a job');
     }
 
     // Validate isolate index early
@@ -390,7 +397,8 @@ class IsolateWorkgroup {
     isolateIndex ??= -1;
 
     if (state == WorkgroupState.disposed) {
-      throw WorkgroupInactiveException('Workgroup has been shut down, cannot add an instance');
+      throw WorkgroupInactiveException(
+          'Workgroup has been shut down, cannot add an instance');
     }
 
     // If a specific isolate is requested and it's valid, use it
@@ -409,7 +417,8 @@ class IsolateWorkgroup {
       );
     } else {
       // Otherwise find the isolate with the fewest instances (that is still alive)
-      var min = 10000000; // max number of instances that can be assigned to a single isolate
+      var min =
+          10000000; // max number of instances that can be assigned to a single isolate
       var minIndex = -1; // index of isolate with the least instances
 
       // Find the isolate with the fewest instances
@@ -417,7 +426,9 @@ class IsolateWorkgroup {
         // Skip killed isolates
         if (!_isolates.containsKey(i)) continue;
 
-        final instanceCount = _members.entries.where((e) => e.value.isolateIndex == i).fold(0, (int prev, _) => prev + 1);
+        final instanceCount = _members.entries
+            .where((e) => e.value.isolateIndex == i)
+            .fold(0, (int prev, _) => prev + 1);
 
         if (instanceCount < min) {
           min = instanceCount;
@@ -463,7 +474,8 @@ class IsolateWorkgroup {
     if (sendPort == null) {
       _creationCompleters.remove(proxy.instanceId);
       _members.remove(proxy.instanceId);
-      throw WorkgroupException('SendPort is null for isolate $targetIsolateIndex. The isolate may not be fully initialized.');
+      throw WorkgroupException(
+          'SendPort is null for isolate $targetIsolateIndex. The isolate may not be fully initialized.');
     }
 
     try {
@@ -500,7 +512,8 @@ class IsolateWorkgroup {
   void destroyInstance(MemberProxy instance, {int? isolate}) {
     // Guard: Check if already destroyed or never existed
     if (!_members.containsKey(instance.instanceId)) {
-      print('⚠️ Warning: Instance ${instance.instanceId} already destroyed or does not exist. Skipping destroyInstance call.');
+      print(
+          '⚠️ Warning: Instance ${instance.instanceId} already destroyed or does not exist. Skipping destroyInstance call.');
       return; // Silently ignore instead of throwing
     }
 
@@ -656,7 +669,8 @@ class IsolateWorkgroup {
   void kill(int isolateIndex) {
     // Validate workgroup state
     if (_state == WorkgroupState.disposed) {
-      throw WorkgroupInactiveException('Cannot kill isolate - workgroup has been shut down');
+      throw WorkgroupInactiveException(
+          'Cannot kill isolate - workgroup has been shut down');
     }
 
     if (_state != WorkgroupState.active) {
@@ -672,10 +686,12 @@ class IsolateWorkgroup {
 
     // Check if isolate exists
     if (!_isolates.containsKey(isolateIndex)) {
-      throw WorkgroupException('Isolate at index $isolateIndex does not exist or has already been removed');
+      throw WorkgroupException(
+          'Isolate at index $isolateIndex does not exist or has already been removed');
     }
 
-    print('⚠️ Killing isolate #$isolateIndex and removing it from the workgroup');
+    print(
+        '⚠️ Killing isolate #$isolateIndex and removing it from the workgroup');
 
     // 1. Kill the isolate
     final isolate = _isolates[isolateIndex];
@@ -695,7 +711,8 @@ class IsolateWorkgroup {
       final completer = _jobCompleters[jobId];
       if (completer != null && !completer.isCompleted) {
         completer.completeError(
-          WorkgroupException('Isolate #$isolateIndex was killed - job cancelled'),
+          WorkgroupException(
+              'Isolate #$isolateIndex was killed - job cancelled'),
         );
       }
       _jobs.remove(jobId);
@@ -790,7 +807,8 @@ class IsolateWorkgroup {
     // The isolate at index 'isolateIndex' is now permanently removed
     // but other isolate indices remain unchanged
 
-    print('❌ Isolate #$isolateIndex has been killed and removed from the workgroup');
+    print(
+        '❌ Isolate #$isolateIndex has been killed and removed from the workgroup');
   }
 
   /// Adds a single isolate to the running workgroup.
@@ -832,8 +850,10 @@ class IsolateWorkgroup {
       _createIsolatePortsAndListeners(
         isolateIndex: newIsolateIndex,
         debugName: debugName,
-        last: Completer(), // We don't need to track completion for single isolate
-        policy: InitializationPolicy.concurrent, // Always use concurrent for single isolate
+        last:
+            Completer(), // We don't need to track completion for single isolate
+        policy: InitializationPolicy
+            .concurrent, // Always use concurrent for single isolate
         stopWatches: {}, // No stopwatch tracking needed for "new" single isolate
       );
 
@@ -903,7 +923,8 @@ class IsolateWorkgroup {
       StreamSubscription? subscription;
 
       subscription = receivePortsStreamsMap[debugName]!.listen((data) {
-        if (data is WorkerLaunchParams && data.isolateIndex == newIsolateIndex) {
+        if (data is WorkerLaunchParams &&
+            data.isolateIndex == newIsolateIndex) {
           // Update the SendPort to the one received from the worker isolate
           _mainToWorkerSendPorts[newIsolateIndex] = data.sendPort;
 
@@ -972,7 +993,8 @@ class IsolateWorkgroup {
   ///
   /// This allows for centralized error handling and reporting without
   /// having to catch errors in each individual job or instance method.
-  void setErrorHandler(IsolateErrorType errorType, void Function(Object error) handler) {
+  void setErrorHandler(
+      IsolateErrorType errorType, void Function(Object error) handler) {
     _errorHandlers[errorType] = handler;
   }
 
@@ -988,7 +1010,8 @@ class IsolateWorkgroup {
 
   void _processCreationResponse(CreationResponse response) {
     if (!_creationCompleters.containsKey(response.instanceId)) {
-      print('Invalid instance ID ${response.instanceId} received in creation response');
+      print(
+          'Invalid instance ID ${response.instanceId} received in creation response');
       return;
     }
 
@@ -1012,7 +1035,8 @@ class IsolateWorkgroup {
     }
   }
 
-  void _processIsolateStartResult(WorkerLaunchParams params, Completer completer) {
+  void _processIsolateStartResult(
+      WorkerLaunchParams params, Completer completer) {
     _isolatesStarted++;
     _avgMicroseconds += params.stopwatch.elapsedMicroseconds;
 
@@ -1056,14 +1080,16 @@ class IsolateWorkgroup {
       }
 
       if (_jobs.isNotEmpty) {
-        print('[🔄 Processing ${_jobs.length} jobs that were queued before isolates were ready]');
+        print(
+            '[🔄 Processing ${_jobs.length} jobs that were queued before isolates were ready]');
         _runJobWithVacantIsolate();
       }
     }
   }
 
   void _processJobResult(WorkgroupJobResult result) {
-    _isolateBusyWithJob[result.isolateIndex] = false; // Mark isolate as available
+    _isolateBusyWithJob[result.isolateIndex] =
+        false; // Mark isolate as available
 
     // Update health status - successful job completion means isolate is healthy
     _updateHealthSuccess(result.isolateIndex);
@@ -1073,7 +1099,8 @@ class IsolateWorkgroup {
     final completer = _jobCompleters[result.jobIndex];
 
     if (completer == null) {
-      print('Job result received for non-existent job (ID: ${result.jobIndex})');
+      print(
+          'Job result received for non-existent job (ID: ${result.jobIndex})');
       return;
     }
 
@@ -1091,7 +1118,8 @@ class IsolateWorkgroup {
           final combinedError = error.withCombinedStackTrace(callerStackTrace);
 
           // Propagate the original error to preserve its type
-          completer.completeError(combinedError.unwrappedError, combinedError.originalStackTrace);
+          completer.completeError(
+              combinedError.unwrappedError, combinedError.originalStackTrace);
         } else {
           // For other error types, propagate directly
           completer.completeError(error, stackTrace);
@@ -1117,7 +1145,8 @@ class IsolateWorkgroup {
     final sendPort = _mainToWorkerSendPorts[instance.isolateIndex];
 
     if (instance.instance.remoteCallback == null) {
-      print('Instance ${request.instanceId} does not have a callback initialized');
+      print(
+          'Instance ${request.instanceId} does not have a callback initialized');
       return;
     }
 
@@ -1142,11 +1171,13 @@ class IsolateWorkgroup {
 
   void _runJobWithVacantIsolate() {
     if (state != WorkgroupState.active) {
-      throw WorkgroupException("WARNING: Attempting to run job when workgroup is not active (state: $state)");
+      throw WorkgroupException(
+          "WARNING: Attempting to run job when workgroup is not active (state: $state)");
     }
 
     if (_mainToWorkerSendPorts.isEmpty) {
-      throw WorkgroupException("ERROR: No send ports available! Isolates may not be properly initialized.");
+      throw WorkgroupException(
+          "ERROR: No send ports available! Isolates may not be properly initialized.");
     }
 
     // Find first alive isolate that is not busy
@@ -1176,7 +1207,8 @@ class IsolateWorkgroup {
       }
 
       if (aliveIsolates.isEmpty) {
-        throw WorkgroupException('No alive isolates available to run jobs. All isolates may have been killed.');
+        throw WorkgroupException(
+            'No alive isolates available to run jobs. All isolates may have been killed.');
       }
 
       final randomIndex = math.Random().nextInt(aliveIsolates.length);
@@ -1208,7 +1240,8 @@ class IsolateWorkgroup {
       if (healthConfig.enabled && healthConfig.checkBeforeDispatching) {
         _ensureIsolateHealthy(job.isolateIndex).then((isHealthy) {
           if (!isHealthy) {
-            print("❌ Isolate ${job.isolateIndex} is not healthy, failing job ${job.jobIndex}");
+            print(
+                "❌ Isolate ${job.isolateIndex} is not healthy, failing job ${job.jobIndex}");
 
             _handleDeadIsolate(job.isolateIndex);
 
@@ -1254,8 +1287,10 @@ class IsolateWorkgroup {
     } catch (e, st) {
       // Check if this is the unsendable closure error
       final errorString = e.toString();
-      if (errorString.contains('unsendable') || errorString.contains('Illegal argument')) {
-        print("❌ UNSENDABLE OBJECT ERROR: Job ${job.jobIndex} contains non-sendable objects");
+      if (errorString.contains('unsendable') ||
+          errorString.contains('Illegal argument')) {
+        print(
+            "❌ UNSENDABLE OBJECT ERROR: Job ${job.jobIndex} contains non-sendable objects");
 
         final completer = _jobCompleters[job.jobIndex];
 
@@ -1304,8 +1339,11 @@ class IsolateWorkgroup {
   /// Central handler for errors received from isolates via error ports.
   void _handleIsolateError(dynamic error) async {
     // Check if this is a WorkgroupIsolateError with a wrapped error
-    final unwrappedError = error is WorkgroupIsolateError ? error.unwrappedError : error;
-    final errorStackTrace = error is WorkgroupIsolateError ? error.originalStackTrace : StackTrace.current;
+    final unwrappedError =
+        error is WorkgroupIsolateError ? error.unwrappedError : error;
+    final errorStackTrace = error is WorkgroupIsolateError
+        ? error.originalStackTrace
+        : StackTrace.current;
 
     IsolateErrorType errorType;
 
@@ -1331,7 +1369,8 @@ class IsolateWorkgroup {
       final isolateIndex = error.isolateIndex;
       final isHealthy = await _pingIsolate(isolateIndex);
       if (!isHealthy) {
-        print('⚠️  Isolate #$isolateIndex is unresponsive after error, marking as dead');
+        print(
+            '⚠️  Isolate #$isolateIndex is unresponsive after error, marking as dead');
         _handleDeadIsolate(isolateIndex);
       }
     }
@@ -1353,7 +1392,8 @@ class IsolateWorkgroup {
       }
     } else {
       // No handler registered, just print the error
-      print('❌ Unhandled isolate error of type $errorType: $unwrappedError\n$errorStackTrace');
+      print(
+          '❌ Unhandled isolate error of type $errorType: $unwrappedError\n$errorStackTrace');
     }
   }
 
@@ -1431,7 +1471,8 @@ class IsolateWorkgroup {
     receivePortsStreamsMap[debugName]!.listen((data) {
       if (_state == WorkgroupState.disposed) {
         _workerErrorSendPorts[debugName]?.send(
-          WorkgroupInactiveException('Workgroup has been shut down, cannot receive messages. Type: ${data.runtimeType}'),
+          WorkgroupInactiveException(
+              'Workgroup has been shut down, cannot receive messages. Type: ${data.runtimeType}'),
         );
         return;
       }
@@ -1462,7 +1503,8 @@ class IsolateWorkgroup {
 
             if (nextIsolateIndex == null) return;
 
-            if (nextIsolateIndex == thisIsolateIndex + 1 && nextIsolateIndex < isolatesCount) {
+            if (nextIsolateIndex == thisIsolateIndex + 1 &&
+                nextIsolateIndex < isolatesCount) {
               final nextIsolate = _isolates[nextIsolateIndex];
               stopWatches[nextIsolateIndex]?.start();
               nextIsolate?.resume(nextIsolate.pauseCapability!);
@@ -1567,7 +1609,8 @@ class IsolateWorkgroup {
 
     try {
       // Send ping with immediate priority for quick response
-      isolate.ping(responsePort.sendPort, response: null, priority: Isolate.immediate);
+      isolate.ping(responsePort.sendPort,
+          response: null, priority: Isolate.immediate);
       final result = await completer.future;
       timeoutTimer.cancel();
       return result;

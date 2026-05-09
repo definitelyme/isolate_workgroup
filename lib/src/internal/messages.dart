@@ -22,7 +22,8 @@ class Request {
 
 /// Message with the response from a request
 class Response {
-  const Response(this.requestId, this.result, this.error, [this.stackTrace, this.isolateIndex = -1]);
+  const Response(this.requestId, this.result, this.error,
+      [this.stackTrace, this.isolateIndex = -1]);
 
   final dynamic error;
   final int isolateIndex;
@@ -136,7 +137,8 @@ class WorkerLaunchParams {
 
 /// Internal representation of a job
 class WorkgroupJobRequest<T> {
-  const WorkgroupJobRequest(this.job, this.jobIndex, this.isolateIndex, {this.started = false});
+  const WorkgroupJobRequest(this.job, this.jobIndex, this.isolateIndex,
+      {this.started = false});
 
   final int isolateIndex;
   final WorkgroupJob<T> job;

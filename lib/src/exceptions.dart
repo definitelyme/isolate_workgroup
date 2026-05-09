@@ -64,7 +64,8 @@ class WorkgroupIsolateError extends WorkgroupException {
 
   WorkgroupIsolateError withCombinedStackTrace(StackTrace mainStackTrace) {
     final combined = _combineStackTraces(originalStackTrace, mainStackTrace);
-    return WorkgroupIsolateError(originalError, isolateIndex, message, combined);
+    return WorkgroupIsolateError(
+        originalError, isolateIndex, message, combined);
   }
 
   static StackTrace _combineStackTraces(StackTrace original, StackTrace main) {

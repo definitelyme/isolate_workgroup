@@ -9,11 +9,13 @@ import '../workgroup_member.dart';
 import 'export.dart';
 
 /// Processes a response message
-void processResponse(Response response, [Map<int, Completer>? requestCompleters]) {
+void processResponse(Response response,
+    [Map<int, Completer>? requestCompleters]) {
   final completers = requestCompleters ?? isolateRequestCompleters;
 
   if (!completers.containsKey(response.requestId)) {
-    throw InvalidWorkgroupResponseException('Response to non-existent request (ID: ${response.requestId}) received');
+    throw InvalidWorkgroupResponseException(
+        'Response to non-existent request (ID: ${response.requestId}) received');
   }
 
   final completer = completers[response.requestId]!;
@@ -22,21 +24,27 @@ void processResponse(Response response, [Map<int, Completer>? requestCompleters]
     if (response.error != null) {
       final error = response.error;
       final stackTrace = response.stackTrace ?? StackTrace.current;
-      final callerStackTrace = StackTrace.current; // Capture where the error is being caught in main isolate
+      final callerStackTrace = StackTrace
+          .current; // Capture where the error is being caught in main isolate
 
       if (error is Exception || error is Error) {
         completer.completeError(error, stackTrace);
       } else if (error is WorkgroupIsolateError) {
         final combinedError = error.withCombinedStackTrace(callerStackTrace);
-        completer.completeError(combinedError.unwrappedError, combinedError.originalStackTrace);
+        completer.completeError(
+            combinedError.unwrappedError, combinedError.originalStackTrace);
       } else {
-        completer.completeError(WorkgroupIsolateError(error, response.isolateIndex, error.toString(), stackTrace), callerStackTrace);
+        completer.completeError(
+            WorkgroupIsolateError(
+                error, response.isolateIndex, error.toString(), stackTrace),
+            callerStackTrace);
       }
     } else {
       completer.complete(response.result);
     }
   } else {
-    throw InvalidWorkgroupResponseException('Response to non-existent request (ID: ${response.requestId}) received\n'
+    throw InvalidWorkgroupResponseException(
+        'Response to non-existent request (ID: ${response.requestId}) received\n'
         'This can happen if the request was already completed/cancelled.');
   }
 
@@ -53,11 +61,13 @@ void runWorker(WorkerLaunchParams params) async {
   isolatePort.listen((message) async {
     if (message is Request) {
       if (!workerInstances.containsKey(message.instanceId)) {
-        final errorMsg = 'Isolate [${params.isolateIndex}] received request for unknown instance ${message.instanceId}';
+        final errorMsg =
+            'Isolate [${params.isolateIndex}] received request for unknown instance ${message.instanceId}';
         print(errorMsg);
 
         final error = WorkgroupMemberNotFoundException(errorMsg);
-        final response = Response(message.id, null, error, StackTrace.current, params.isolateIndex);
+        final response = Response(
+            message.id, null, error, StackTrace.current, params.isolateIndex);
         params.sendPort.send(response);
         params.errorSendPort?.send(error);
         return;
@@ -67,18 +77,22 @@ void runWorker(WorkerLaunchParams params) async {
 
       try {
         final result = await instance.handle(message.action);
-        final response = Response(message.id, result, null, null, params.isolateIndex);
+        final response =
+            Response(message.id, result, null, null, params.isolateIndex);
         params.sendPort.send(response);
       } catch (e, st) {
         final response = Response(message.id, null, e, st, params.isolateIndex);
         params.sendPort.send(response);
-        params.errorSendPort?.send(WorkgroupIsolateError(e, params.isolateIndex, 'Error processing request: ${e.toString()}', st));
+        params.errorSendPort?.send(WorkgroupIsolateError(e, params.isolateIndex,
+            'Error processing request: ${e.toString()}', st));
       }
     } else if (message is Response) {
       if (!isolateRequestCompleters.containsKey(message.requestId)) {
-        final errorMsg = 'Isolate ${params.isolateIndex} received response for unknown request ${message.requestId}';
+        final errorMsg =
+            'Isolate ${params.isolateIndex} received response for unknown request ${message.requestId}';
         // print(errorMsg);
-        params.errorSendPort?.send(InvalidWorkgroupResponseException(errorMsg, StackTrace.current));
+        params.errorSendPort?.send(
+            InvalidWorkgroupResponseException(errorMsg, StackTrace.current));
         return;
       }
 
@@ -91,14 +105,17 @@ void runWorker(WorkerLaunchParams params) async {
         params.sendPort.send(CreationResponse(message.memberId, null));
       } catch (e, st) {
         params.sendPort.send(CreationResponse(message.memberId, e, st));
-        params.errorSendPort?.send(WorkgroupIsolateError(e, params.isolateIndex, 'Error creating instance: ${e.toString()}', st));
+        params.errorSendPort?.send(WorkgroupIsolateError(e, params.isolateIndex,
+            'Error creating instance: ${e.toString()}', st));
       }
     } else if (message is DestroyRequest) {
       if (!workerInstances.containsKey(message.instanceId)) {
-        final errorMsg = 'Isolate ${params.isolateIndex} received destroy request for unknown instance ${message.instanceId}';
+        final errorMsg =
+            'Isolate ${params.isolateIndex} received destroy request for unknown instance ${message.instanceId}';
         // print(errorMsg);
 
-        params.errorSendPort?.send(InvalidWorkgroupResponseException(errorMsg, StackTrace.current));
+        params.errorSendPort?.send(
+            InvalidWorkgroupResponseException(errorMsg, StackTrace.current));
 
         // Attempt to remove the instance from the map, just to be safe
         workerInstances.remove(message.instanceId);
@@ -110,24 +127,29 @@ void runWorker(WorkerLaunchParams params) async {
         await instance?.dispose();
       } catch (e, st) {
         // print('Error during instance disposal: $e\n$st');
-        params.errorSendPort?.send(WorkgroupIsolateError(e, params.isolateIndex, 'Error disposing instance: ${e.toString()}', st));
+        params.errorSendPort?.send(WorkgroupIsolateError(e, params.isolateIndex,
+            'Error disposing instance: ${e.toString()}', st));
       } finally {
         workerInstances.remove(message.instanceId);
       }
     } else if (message is WorkgroupJobRequest) {
       try {
         final result = await message.job.execute();
-        params.sendPort.send(WorkgroupJobResult(result, message.jobIndex, message.isolateIndex, null, null));
+        params.sendPort.send(WorkgroupJobResult(
+            result, message.jobIndex, message.isolateIndex, null, null));
       } catch (e, st) {
-        final error = WorkgroupIsolateError(e, params.isolateIndex, 'Error during job execution: ${e.toString()}', st);
-        params.sendPort.send(WorkgroupJobResult(null, message.jobIndex, message.isolateIndex, error, st));
+        final error = WorkgroupIsolateError(e, params.isolateIndex,
+            'Error during job execution: ${e.toString()}', st);
+        params.sendPort.send(WorkgroupJobResult(
+            null, message.jobIndex, message.isolateIndex, error, st));
         params.errorSendPort?.send(error);
       }
     } else if (message is ExternalJob) {
       try {
         await message.job.execute();
       } catch (e, st) {
-        final error = WorkgroupIsolateError(e, params.isolateIndex, 'Error executing external job: ${e.toString()}', st);
+        final error = WorkgroupIsolateError(e, params.isolateIndex,
+            'Error executing external job: ${e.toString()}', st);
         params.errorSendPort?.send(error);
       }
     } else {
@@ -145,7 +167,8 @@ void runWorker(WorkerLaunchParams params) async {
   try {
     await params.initFunc?.call();
   } catch (e, st) {
-    final error = WorkgroupSetupException(params.isolateIndex, 'Error during initialization: ${e.toString()}', st);
+    final error = WorkgroupSetupException(params.isolateIndex,
+        'Error during initialization: ${e.toString()}', st);
     params.errorSendPort?.send(error);
     params.stopwatch.stop();
 

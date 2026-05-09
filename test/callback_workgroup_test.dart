@@ -82,8 +82,8 @@ void main() {
 
     test('sync: synchronous=true executes executeSync()', () async {
       final received = <int>[];
-      final result = await CallbackWorkgroup(_SyncJob(7))
-          .run((arg) => received.add(arg));
+      final result =
+          await CallbackWorkgroup(_SyncJob(7)).run((arg) => received.add(arg));
       expect(result, 70);
       expect(received, [7]);
     });
@@ -181,8 +181,7 @@ void main() {
       },
     );
 
-    test('exception type is preserved across the isolate boundary',
-        () async {
+    test('exception type is preserved across the isolate boundary', () async {
       try {
         await CallbackWorkgroup(_ThrowingAsyncJob('preserve')).run(null);
         fail('expected throw');

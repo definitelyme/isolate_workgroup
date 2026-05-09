@@ -35,7 +35,6 @@ class _ReadDisposeCountJob extends WorkgroupJob<int> {
   Future<int> execute() async => _isolateDisposeCount;
 }
 
-
 void main() {
   group('addInstance', () {
     late IsolateWorkgroup wg;
@@ -184,8 +183,7 @@ void main() {
         }, (e, _) => uncaught.add(e));
 
         expect(uncaught, isEmpty,
-            reason:
-                'addInstance failure must not orphan a creation completer');
+            reason: 'addInstance failure must not orphan a creation completer');
       },
     );
   });
@@ -267,8 +265,7 @@ void main() {
       expect(r, 7);
     });
 
-    test('caught: error inside handle() rejects the invoke future',
-        () async {
+    test('caught: error inside handle() rejects the invoke future', () async {
       final proxy = await wg.addInstance(EchoMember());
       await expectLater(
         proxy.invoke<dynamic>(ThrowCommand('handle-boom')),
@@ -386,8 +383,7 @@ void main() {
         final fut = proxy.invoke<Object?>(NotifyHostCommand('x'));
         final racer = await Future.any<Object?>([
           fut.then<Object?>((v) => 'resolved'),
-          Future.delayed(const Duration(milliseconds: 250),
-              () => 'timed-out'),
+          Future.delayed(const Duration(milliseconds: 250), () => 'timed-out'),
         ]);
         expect(racer, 'timed-out',
             reason:

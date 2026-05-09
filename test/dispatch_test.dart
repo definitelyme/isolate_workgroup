@@ -272,9 +272,8 @@ void main() {
           if (i.isEven) {
             futures.add(wg.dispatch(AddJob(i, 1)));
           } else {
-            futures.add(wg
-                .dispatch(ThrowJob('err-$i'))
-                .catchError((Object _) => -1));
+            futures.add(
+                wg.dispatch(ThrowJob('err-$i')).catchError((Object _) => -1));
           }
         }
         final results = await Future.wait(futures);
