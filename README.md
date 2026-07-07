@@ -214,3 +214,5 @@ BSD 3-Clause. See [`LICENSE`](LICENSE) for the full text.
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) for setup, workflow, and
 code-style guidelines.
+
+Inspired by https://pub.dev/packages/isolate_pool_2
